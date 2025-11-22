@@ -1,19 +1,17 @@
 import { useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { Plus, Pencil } from "lucide-react";
 import AddTransactionModal from "../components/AddTransactionModal";
 import EditTransactionModal from "../components/EditTransactionModal";
 import { useExpenseContext } from "../context/ExpenseContext";
 
 export default function ExpensesPage() {
   const { year, month } = useParams();
-  const navigate = Link; // optional if using back link
   const {
     years,
     addTransaction,
     updateTransaction,
     removeTransaction,
-    clearDB,
   } = useExpenseContext();
 
   const [showAddModal, setShowAddModal] = useState(false);
@@ -25,15 +23,14 @@ export default function ExpensesPage() {
 
   // Group transactions by day, sorted most recent first
   const grouped =
-  monthObj?.days
-    .slice() // clone to avoid mutating original
-    .sort((a, b) => b.day - a.day) // most recent day first
-    .map((d) => ({
-      day: d.day,
-      dayId: d.id,
-      transactions: d.transactions || [],
-    })) || [];
-
+    monthObj?.days
+      .slice()
+      .sort((a, b) => b.day - a.day)
+      .map((d) => ({
+        day: d.day,
+        dayId: d.id,
+        transactions: d.transactions || [],
+      })) || [];
 
   // ----------------------
   // Add transactions
@@ -69,19 +66,6 @@ export default function ExpensesPage() {
     setEditDay(null);
   };
 
-  // ----------------------
-  // Delete all
-  // ----------------------
-  const handleDeleteAll = async () => {
-    if (
-      confirm(
-        "Are you sure you want to delete ALL transactions, days, months, and years?"
-      )
-    ) {
-      await clearDB();
-    }
-  };
-
   return (
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="flex justify-between items-center mb-6 gap-2">
@@ -102,13 +86,6 @@ export default function ExpensesPage() {
             <Plus size={16} />
             Add Transaction
           </button>
-          <button
-            onClick={handleDeleteAll}
-            className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-xl transition"
-          >
-            <Trash2 size={16} />
-            Delete All DB
-          </button>
         </div>
       </div>
 
@@ -124,7 +101,7 @@ export default function ExpensesPage() {
 
         return (
           <div
-            key={dayId} // use unique DB id
+            key={dayId}
             className="group mb-6 bg-white p-4 rounded-xl shadow-sm border border-gray-100 relative overflow-hidden"
           >
             {/* Hover Edit Button */}
@@ -165,7 +142,7 @@ export default function ExpensesPage() {
                       <td className="border px-3 py-2 font-mono text-gray-600 text-sm">
                         {breakdownDisplay}
                       </td>
-                      <td className="border border-gray-600 px-3 py-2  font-mono text-right font-semibold text-indigo-600">
+                      <td className="border border-gray-600 px-3 py-2 font-mono text-right font-semibold text-indigo-600">
                         ₱{Number(t.amount || 0).toLocaleString()}
                       </td>
                       <td className="border px-3 py-2 text-gray-500">{t.comments}</td>

@@ -266,34 +266,38 @@ export function ExpenseProvider({ children }) {
   // Export / Import
   // ---------------------------
   const exportExpenses = async () => {
-    const data = await db.years.toArray();
-    const months = await db.months.toArray();
-    const days = await db.days.toArray();
-    const transactions = await db.transactions.toArray();
+    const yearsData = await db.years.toArray();
+    const monthsData = await db.months.toArray();
+    const daysData = await db.days.toArray();
+    const transactionsData = await db.transactions.toArray();
+    const bucketsData = await db.buckets.toArray();
+    const bucketAssignmentsData = await db.bucketAssignments.toArray();
 
-    const structured = data.map((y) => ({
+    // Build nested structure
+    const structured = yearsData.map((y) => ({
       ...y,
-      months: months
+      months: monthsData
         .filter((m) => m.yearId === y.id)
         .map((m) => ({
           ...m,
-          days: days
-            .filter((d) => d.monthId === m.id && d.yearId === y.id)
+          days: daysData
+            .filter((d) => d.yearId === y.id && d.monthId === m.id)
             .map((d) => ({
               ...d,
-              transactions: transactions.filter(
+              transactions: transactionsData.filter(
                 (t) =>
-                  t.dayId === d.id &&
+                  t.yearId === y.id &&
                   t.monthId === m.id &&
-                  t.yearId === y.id
+                  t.dayId === d.id
               ),
             })),
         })),
     }));
 
-    const blob = new Blob([JSON.stringify(structured, null, 2)], {
-      type: "application/json",
-    });
+    const blob = new Blob(
+      [JSON.stringify({ years: structured, buckets: bucketsData, bucketAssignments: bucketAssignmentsData }, null, 2)],
+      { type: "application/json" }
+    );
 
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -304,6 +308,9 @@ export function ExpenseProvider({ children }) {
     document.body.removeChild(a);
   };
 
+  // -------------------------
+  // Import Expenses
+  // -------------------------
   const importExpenses = async (file, replace = false) => {
     const text = await file.text();
     let importedData;
@@ -317,18 +324,34 @@ export function ExpenseProvider({ children }) {
 
     if (replace) await clearDB();
 
-    for (const year of importedData) {
-      const yearId = await addYear(year.year);
+    const { years = [], buckets = [], bucketAssignments = [] } = importedData;
+
+    // Insert buckets
+    const bucketIdMap = {};
+    for (const b of buckets) {
+      const id = await db.buckets.add({ name: b.name });
+      bucketIdMap[b.id] = id;
+    }
+
+    // Insert bucket assignments
+    for (const ba of bucketAssignments) {
+      const newBucketId = bucketIdMap[ba.bucketId] || ba.bucketId;
+      await db.bucketAssignments.add({ bucketId: newBucketId, category: ba.category });
+    }
+
+    // Insert years/months/days/transactions
+    for (const year of years) {
+      const yearId = await db.years.add({ year: year.year });
 
       for (const month of year.months || []) {
-        const monthId = await addMonth(yearId, month.name);
+        const monthId = await db.months.add({ yearId, name: month.name });
 
         for (const day of month.days || []) {
-          const dayId = await addDay(yearId, monthId, day.day);
+          const dayId = await db.days.add({ yearId, monthId, day: day.day });
 
           for (const tx of day.transactions || []) {
             const { id, ...txData } = tx;
-            await addTransaction(yearId, monthId, dayId, txData);
+            await db.transactions.add({ yearId, monthId, dayId, ...txData });
           }
         }
       }
@@ -336,6 +359,7 @@ export function ExpenseProvider({ children }) {
 
     alert("Import completed!");
   };
+
 
   const value = {
     years,
