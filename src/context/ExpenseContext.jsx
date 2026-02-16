@@ -7,12 +7,18 @@ import Dexie from "dexie";
 // ---------------------------
 const db = new Dexie("ExpensesDB");
 
-db.version(2).stores({
+db.version(4).stores({
   years: "++id, year",
   months: "++id, yearId, name, &[yearId+name]",
   days: "++id, yearId, monthId, day, &[yearId+monthId+day]",
+
+  // travelId added
   transactions:
-    "++id, yearId, monthId, dayId, category, &[yearId+monthId+dayId+category]",
+    "++id, yearId, monthId, dayId, category, travelId, &[yearId+monthId+dayId+category]",
+
+  // new table
+  travels: "++id, title, startDate, endDate",
+
   buckets: "++id, name",
   bucketAssignments: "++id, bucketId, category",
 });
@@ -21,6 +27,7 @@ const ExpenseContext = createContext();
 
 export function ExpenseProvider({ children }) {
   const [years, setYears] = useState([]);
+  const [travels, setTravels] = useState([]);
 
   // ---------------------------
   // Load full hierarchy from DB
@@ -30,6 +37,11 @@ export function ExpenseProvider({ children }) {
     const allMonths = await db.months.toArray();
     const allDays = await db.days.toArray();
     const allTransactions = await db.transactions.toArray();
+    const allTravels = await db.travels.toArray();
+
+    const travelMap = Object.fromEntries(
+      allTravels.map((t) => [t.id, t])
+    );
 
     const structured = allYears.map((y) => ({
       ...y,
@@ -41,20 +53,27 @@ export function ExpenseProvider({ children }) {
             .filter((d) => d.monthId === m.id && d.yearId === y.id)
             .map((d) => ({
               ...d,
-              transactions: allTransactions.filter(
-                (t) =>
-                  t.dayId === d.id &&
-                  t.monthId === m.id &&
-                  t.yearId === y.id
-              ),
+              transactions: allTransactions
+                .filter(
+                  (t) =>
+                    t.dayId === d.id &&
+                    t.monthId === m.id &&
+                    t.yearId === y.id
+                )
+                .map((t) => ({
+                  ...t,
+                  travel: t.travelId
+                    ? travelMap[t.travelId] || null
+                    : null,
+                })),
             })),
         })),
     }));
 
     setYears(structured);
+    setTravels(allTravels);
   };
 
-  // Load once on mount
   useEffect(() => {
     reloadHierarchy();
   }, []);
@@ -124,7 +143,12 @@ export function ExpenseProvider({ children }) {
   // ---------------------------
   // Transaction operations
   // ---------------------------
-  const addTransaction = async (yearId, monthId, dayId, transaction) => {
+  const addTransaction = async (
+    yearId,
+    monthId,
+    dayId,
+    transaction
+  ) => {
     const existing = await db.transactions
       .where("[yearId+monthId+dayId+category]")
       .equals([yearId, monthId, dayId, transaction.category])
@@ -137,7 +161,9 @@ export function ExpenseProvider({ children }) {
       yearId,
       monthId,
       dayId,
+      travelId: transaction.travelId || null,
     });
+
     await reloadHierarchy();
     return id;
   };
@@ -150,6 +176,54 @@ export function ExpenseProvider({ children }) {
   const removeTransaction = async (transactionId) => {
     await db.transactions.delete(transactionId);
     await reloadHierarchy();
+  };
+
+  // ---------------------------
+  // Travel operations
+  // ---------------------------
+  const addTravel = async ({
+    title,
+    startDate,
+    endDate,
+    comments,
+  }) => {
+    const id = await db.travels.add({
+      title,
+      startDate: new Date(startDate),
+      endDate: new Date(endDate),
+      comments,
+    });
+
+    await reloadHierarchy();
+    return id;
+  };
+
+  const updateTravel = async (travelId, updates) => {
+    await db.travels.update(travelId, {
+      ...updates,
+      startDate: updates.startDate
+        ? new Date(updates.startDate)
+        : undefined,
+      endDate: updates.endDate
+        ? new Date(updates.endDate)
+        : undefined,
+    });
+
+    await reloadHierarchy();
+  };
+
+  const removeTravel = async (travelId) => {
+    // unlink transactions instead of deleting them
+    await db.transactions
+      .where({ travelId })
+      .modify({ travelId: null });
+
+    await db.travels.delete(travelId);
+    await reloadHierarchy();
+  };
+
+  const getTravelTransactions = async (travelId) => {
+    return await db.transactions.where({ travelId }).toArray();
   };
 
   // ---------------------------
@@ -173,8 +247,84 @@ export function ExpenseProvider({ children }) {
     await db.days.clear();
     await db.months.clear();
     await db.years.clear();
+    await db.travels.clear();
+    await db.buckets.clear();
+    await db.bucketAssignments.clear();
     setYears([]);
+    setTravels([]);
   };
+
+  // -------------------------
+  // Export Expenses
+  // -------------------------
+  const exportExpenses = async () => {
+    const exportData = {
+      years: await db.years.toArray(),
+      months: await db.months.toArray(),
+      days: await db.days.toArray(),
+      transactions: await db.transactions.toArray(),
+      travels: await db.travels.toArray(),
+      buckets: await db.buckets.toArray(),
+      bucketAssignments: await db.bucketAssignments.toArray(),
+    };
+
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], {
+      type: "application/json",
+    });
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `expenses_export_${new Date().toISOString()}.json`;
+    a.click();
+  };
+
+  // -------------------------
+  // Import Expenses
+  // -------------------------
+  const importExpenses = async (file) => {
+    const text = await file.text();
+    const importedData = JSON.parse(text);
+
+    const {
+      years = [],
+      months = [],
+      days = [],
+      transactions = [],
+      travels = [],
+      buckets = [],
+      bucketAssignments = [],
+    } = importedData;
+
+    await db.travels.bulkPut(travels);
+    await db.buckets.bulkPut(buckets);
+    await db.bucketAssignments.bulkPut(bucketAssignments);
+    await db.years.bulkPut(years);
+    await db.months.bulkPut(months);
+    await db.days.bulkPut(days);
+    await db.transactions.bulkPut(transactions);
+
+    await reloadHierarchy();
+    alert("Import completed!");
+  };
+
+  // -------------------------
+  // Categories helper
+  // -------------------------
+  const categories = useMemo(() => {
+    const allTransactions = years
+      .flatMap((y) => y.months ?? [])
+      .flatMap((m) => m.days ?? [])
+      .flatMap((d) => d.transactions ?? []);
+
+    const cats = new Set(
+      allTransactions.map((t) => t.category).filter(Boolean)
+    );
+
+    return Array.from(cats).sort((a, b) =>
+      a.localeCompare(b)
+    );
+  }, [years]);
 
   // ---------------------------
   // Bucket operations
@@ -209,7 +359,6 @@ export function ExpenseProvider({ children }) {
     }
   };
 
-
   const getBucketsWithCategories = async () => {
     try {
       const buckets = await db.buckets.toArray();
@@ -226,16 +375,6 @@ export function ExpenseProvider({ children }) {
       return [];
     }
   };
-
-  // Add this helper to get all unique categories
-  const categories = useMemo(() => {
-    const allTransactions = years
-      .flatMap((y) => y.months ?? [])
-      .flatMap((m) => m.days ?? [])
-      .flatMap((d) => d.transactions ?? []);
-    const cats = new Set(allTransactions.map((t) => t.category).filter(Boolean));
-    return Array.from(cats).sort((a, b) => a.localeCompare(b)); // alphabetically sorted
-  }, [years]);
 
   const cleanBucketAssignments = async () => {
     try {
@@ -262,127 +401,39 @@ export function ExpenseProvider({ children }) {
     }
   };
 
-  // ---------------------------
-  // Export / Import
-  // ---------------------------
-  const exportExpenses = async () => {
-    const yearsData = await db.years.toArray();
-    const monthsData = await db.months.toArray();
-    const daysData = await db.days.toArray();
-    const transactionsData = await db.transactions.toArray();
-    const bucketsData = await db.buckets.toArray();
-    const bucketAssignmentsData = await db.bucketAssignments.toArray();
-
-    // Build nested structure
-    const structured = yearsData.map((y) => ({
-      ...y,
-      months: monthsData
-        .filter((m) => m.yearId === y.id)
-        .map((m) => ({
-          ...m,
-          days: daysData
-            .filter((d) => d.yearId === y.id && d.monthId === m.id)
-            .map((d) => ({
-              ...d,
-              transactions: transactionsData.filter(
-                (t) =>
-                  t.yearId === y.id &&
-                  t.monthId === m.id &&
-                  t.dayId === d.id
-              ),
-            })),
-        })),
-    }));
-
-    const blob = new Blob(
-      [JSON.stringify({ years: structured, buckets: bucketsData, bucketAssignments: bucketAssignmentsData }, null, 2)],
-      { type: "application/json" }
-    );
-
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `expenses_export_${new Date().toISOString()}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  };
-
-  // -------------------------
-  // Import Expenses
-  // -------------------------
-  const importExpenses = async (file, replace = false) => {
-    const text = await file.text();
-    let importedData;
-
-    try {
-      importedData = JSON.parse(text);
-    } catch {
-      alert("Invalid JSON file.");
-      return;
-    }
-
-    if (replace) await clearDB();
-
-    const { years = [], buckets = [], bucketAssignments = [] } = importedData;
-
-    // Insert buckets
-    const bucketIdMap = {};
-    for (const b of buckets) {
-      const id = await db.buckets.add({ name: b.name });
-      bucketIdMap[b.id] = id;
-    }
-
-    // Insert bucket assignments
-    for (const ba of bucketAssignments) {
-      const newBucketId = bucketIdMap[ba.bucketId] || ba.bucketId;
-      await db.bucketAssignments.add({ bucketId: newBucketId, category: ba.category });
-    }
-
-    // Insert years/months/days/transactions
-    for (const year of years) {
-      const yearId = await db.years.add({ year: year.year });
-
-      for (const month of year.months || []) {
-        const monthId = await db.months.add({ yearId, name: month.name });
-
-        for (const day of month.days || []) {
-          const dayId = await db.days.add({ yearId, monthId, day: day.day });
-
-          for (const tx of day.transactions || []) {
-            const { id, ...txData } = tx;
-            await db.transactions.add({ yearId, monthId, dayId, ...txData });
-          }
-        }
-      }
-    }
-
-    alert("Import completed!");
-  };
-
-
   const value = {
     years,
+    travels,
+
     addYear,
     removeYear,
     addMonth,
     removeMonth,
     addDay,
     removeDay,
+
     addTransaction,
     updateTransaction,
     removeTransaction,
+
+    addTravel,
+    updateTravel,
+    removeTravel,
+    getTravelTransactions,
+
     getYearId,
     getMonthId,
     clearDB,
     exportExpenses,
     importExpenses,
-    categories,
-    addBucket,
-    removeBucket,
-    assignToBucket,
+
+    addBucket, 
+    removeBucket, 
+    assignToBucket, 
+    getBucketsWithCategories, 
     cleanBucketAssignments,
-    getBucketsWithCategories,
+
+    categories,
   };
 
   return (
@@ -394,6 +445,10 @@ export function ExpenseProvider({ children }) {
 
 export const useExpenseContext = () => {
   const ctx = useContext(ExpenseContext);
-  if (!ctx) throw new Error("useExpenseContext must be used within an ExpenseProvider");
+  if (!ctx)
+    throw new Error(
+      "useExpenseContext must be used within an ExpenseProvider"
+    );
   return ctx;
 };
+

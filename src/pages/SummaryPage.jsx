@@ -3,6 +3,12 @@ import MonthlySpendChart from "../components/MonthlySpendChart";
 import { useNavigate } from "react-router-dom";
 import { useExpenseContext } from "../context/ExpenseContext";
 import { useState, useMemo, useEffect } from "react";
+import DatePicker from "react-date-picker";
+import "react-date-picker/dist/DatePicker.css";
+import "react-calendar/dist/Calendar.css";
+
+const monthIndex = (monthName) =>
+  new Date(`${monthName} 1, 2000`).getMonth(); // helper for date comparisons
 
 const SummaryPage = () => {
   const navigate = useNavigate();
@@ -12,17 +18,17 @@ const SummaryPage = () => {
   const [importing, setImporting] = useState(false);
 
   // -------------------------
-  // Filters
+  // Time slicers
   // -------------------------
-  const [selectedYear, setSelectedYear] = useState(null);
-  const [selectedMonth, setSelectedMonth] = useState(null);
-  const [useBuckets, setUseBuckets] = useState(true);
+  const [fromDate, setFromDate] = useState(null);
+  const [toDate, setToDate] = useState(null);
 
-  // bucket data
+  // -------------------------
+  // Bucket toggle & filters
+  // -------------------------
+  const [useBuckets, setUseBuckets] = useState(true);
   const [buckets, setBuckets] = useState([]);
   const [selectedBucketIds, setSelectedBucketIds] = useState([]);
-
-  // category filters (Row 3)
   const [selectedCategoryFilters, setSelectedCategoryFilters] = useState([]);
 
   useEffect(() => {
@@ -40,29 +46,31 @@ const SummaryPage = () => {
   }, [years]);
 
   // -------------------------
-  // First-level year/month filtering
+  // Time filtering
   // -------------------------
-  const yearMonthFilteredTx = useMemo(() => {
+  const timeFilteredTx = useMemo(() => {
     return allTransactions.filter((t) => {
       const yearObj = years.find((y) => y.id === t.yearId);
-      const txYear = yearObj?.year;
-      const txMonth = yearObj?.months?.find((m) => m.id === t.monthId)?.name;
+      const monthObj = yearObj?.months?.find((m) => m.id === t.monthId);
+      if (!yearObj || !monthObj) return false;
 
-      const yearMatch = !selectedYear || selectedYear === txYear;
-      const monthMatch = !selectedMonth || selectedMonth === txMonth;
+      const txDate = new Date(yearObj.year, monthIndex(monthObj.name), 1);
 
-      return yearMatch && monthMatch;
+      const afterFrom = !fromDate || txDate >= fromDate;
+      const beforeTo = !toDate || txDate <= toDate;
+
+      return afterFrom && beforeTo;
     });
-  }, [allTransactions, selectedYear, selectedMonth, years]);
+  }, [allTransactions, fromDate, toDate, years]);
 
   // -------------------------
   // Available categories
   // -------------------------
   const availableCategories = useMemo(() => {
-    return [...new Set(yearMonthFilteredTx.map((t) => t.category))].filter(
+    return [...new Set(timeFilteredTx.map((t) => t.category))].filter(
       Boolean
     );
-  }, [yearMonthFilteredTx]);
+  }, [timeFilteredTx]);
 
   // auto-clear invalid category selections
   useEffect(() => {
@@ -72,32 +80,24 @@ const SummaryPage = () => {
   }, [availableCategories]);
 
   // -------------------------
-  // SECOND-LEVEL filtering: buckets + categories
+  // Bucket + category filtering
   // -------------------------
   const filteredTransactions = useMemo(() => {
-    let tx = yearMonthFilteredTx;
+    let tx = timeFilteredTx;
 
-    // Apply bucket filter if any
     if (selectedBucketIds.length > 0) {
       const allowedCats = buckets
         .filter((b) => selectedBucketIds.includes(b.id))
         .flatMap((b) => b.categories);
-
       tx = tx.filter((t) => allowedCats.includes(t.category));
     }
 
-    // Category filters always apply
     if (selectedCategoryFilters.length > 0) {
       tx = tx.filter((t) => selectedCategoryFilters.includes(t.category));
     }
 
     return tx;
-  }, [
-    yearMonthFilteredTx,
-    selectedBucketIds,
-    selectedCategoryFilters,
-    buckets,
-  ]);
+  }, [timeFilteredTx, selectedBucketIds, selectedCategoryFilters, buckets]);
 
   // -------------------------
   // Pie chart data
@@ -122,7 +122,7 @@ const SummaryPage = () => {
       }));
     }
 
-    // Detail mode: aggregate by category
+    // Detail mode
     const map = {};
     filteredTransactions.forEach((t) => {
       if (!t.category) return;
@@ -146,7 +146,6 @@ const SummaryPage = () => {
   // -------------------------
   const monthlyTotals = useMemo(() => {
     const map = {};
-
     filteredTransactions.forEach((t) => {
       const y = years.find((yy) => yy.id === t.yearId);
       const m = y?.months?.find((mm) => mm.id === t.monthId);
@@ -165,7 +164,7 @@ const SummaryPage = () => {
   }, [filteredTransactions, years]);
 
   // -------------------------
-  // Importer
+  // Importer & clear filters
   // -------------------------
   const handleImport = async (event) => {
     const file = event.target.files[0];
@@ -175,12 +174,9 @@ const SummaryPage = () => {
     setImporting(false);
   };
 
-  // -------------------------
-  // Clear filters
-  // -------------------------
   const clearFilters = () => {
-    setSelectedYear(null);
-    setSelectedMonth(null);
+    setFromDate(null);
+    setToDate(null);
     setSelectedBucketIds([]);
     setSelectedCategoryFilters([]);
   };
@@ -222,11 +218,18 @@ const SummaryPage = () => {
         >
           Clear Filters
         </button>
+
+        <button
+          onClick={() => navigate("/travels")}
+          className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl"
+        >
+          Manage Travel
+        </button>
       </div>
 
       {/* FILTERS */}
       <div className="max-w-5xl mx-auto flex flex-col gap-3 mb-6">
-        {/* Row 1: Mode + Year + Month */}
+        {/* Row 1: Bucket toggle + Time slicers */}
         <div className="flex flex-wrap gap-4 items-center">
           {/* Toggle */}
           <label className="group relative w-28 h-7 rounded-full select-none cursor-pointer flex border border-gray-500">
@@ -236,7 +239,7 @@ const SummaryPage = () => {
               checked={useBuckets}
               onChange={() => {
                 setUseBuckets(!useBuckets);
-                setSelectedCategoryFilters([]); // clear categories on mode switch
+                setSelectedCategoryFilters([]);
               }}
             />
             <div className="absolute left-0 top-0 w-1/2 h-full bg-indigo-500 rounded-full shadow-md transition-all peer-checked:left-1/2"></div>
@@ -248,41 +251,30 @@ const SummaryPage = () => {
             </span>
           </label>
 
-          {/* Year */}
-          <select
-            value={selectedYear || ""}
-            onChange={(e) =>
-              setSelectedYear(e.target.value ? Number(e.target.value) : null)
-            }
-            className="border px-3 py-2 rounded-lg"
-          >
-            <option value="">All Years</option>
-            {years.map((y) => (
-              <option key={y.id} value={y.year}>
-                {y.year}
-              </option>
-            ))}
-          </select>
-
-          {/* Month */}
-          <select
-            value={selectedMonth || ""}
-            onChange={(e) => setSelectedMonth(e.target.value || null)}
-            className="border px-3 py-2 rounded-lg"
-          >
-            <option value="">All Months</option>
-            {selectedYear &&
-              years
-                .find((y) => y.year === selectedYear)
-                ?.months.map((m) => (
-                  <option key={m.id} value={m.name}>
-                    {m.name}
-                  </option>
-                ))}
-          </select>
+          {/* From / To DatePickers */}
+          <div>
+            <label className="block text-xs text-gray-600">From</label>
+            <DatePicker
+              value={fromDate}
+              onChange={setFromDate}
+              format="MM/yyyy"
+              clearIcon={null}
+              maxDetail="month"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-600">To</label>
+            <DatePicker
+              value={toDate}
+              onChange={setToDate}
+              format="MM/yyyy"
+              clearIcon={null}
+              maxDetail="month"
+            />
+          </div>
         </div>
 
-        {/* Row 2: Bucket filters (always visible) */}
+        {/* Row 2: Bucket filters */}
         <div className="flex flex-wrap gap-2">
           {buckets.map((b) => (
             <label
@@ -310,7 +302,7 @@ const SummaryPage = () => {
           ))}
         </div>
 
-        {/* Row 3: Category filters (only from selected buckets) */}
+        {/* Row 3: Category filters */}
         {selectedBucketIds.length > 0 && (
           <div className="flex flex-wrap gap-2">
             {buckets

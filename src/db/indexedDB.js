@@ -6,11 +6,15 @@ import Dexie from "dexie";
 export const db = new Dexie("ExpensesDB");
 
 // Year → Month → Day → Transaction hierarchy
-db.version(2).stores({
+db.version(3).stores({
   years: "++id, year",
-  months: "++id, yearId, name, &[yearId+name]",                 // unique month per year
-  days: "++id, yearId, monthId, day, &[yearId+monthId+day]",  // unique day per year+month
-  transactions: "++id, yearId, monthId, dayId, category, &[yearId+monthId+dayId+category]", // unique per hierarchy+category
+  months: "++id, yearId, name, &[yearId+name]",
+  days: "++id, yearId, monthId, day, &[yearId+monthId+day]",
+  transactions:
+    "++id, yearId, monthId, dayId, category, &[yearId+monthId+dayId+category]",
+  travels: "++id, name, startDate, endDate, description",
+  travel_transactions:
+    "++id, travelId, yearId, monthId, dayId, category, &[travelId+yearId+monthId+dayId+category]",
   buckets: "++id, name",
   bucketAssignments: "++id, bucketId, category",
 });

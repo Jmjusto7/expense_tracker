@@ -2,6 +2,8 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import SummaryPage from "./pages/SummaryPage";
 import YearExpensesPage from "./pages/YearExpensesPage";
 import MonthExpensesPage from "./pages/MonthExpensesPage";
+import TravelsPage from "./pages/TravelsPage";
+import TravelDetailPage from "./pages/TravelDetailPage";
 import ExpensesPage from "./pages/ExpensesPage";
 import SettingsPage from "./pages/SettingsPage";
 import HierarchyGuard from "./components/HierarchyGuard";
@@ -36,6 +38,19 @@ export default function AppRoutes() {1
             <HierarchyGuard>
               <ExpensesPage />
             </HierarchyGuard>
+          }
+        />
+
+        {/* Year list page */}
+        <Route path="/travels" element={<TravelsPage />} />
+
+        /* Travel detail */
+        <Route
+          path="/travels/:travelId"
+          element={
+            // <HierarchyGuard>
+              <TravelDetailPage />
+            // </HierarchyGuard>
           }
         />
       </Routes>

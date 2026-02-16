@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import CategoryBucketing from "./settings/CategoryBucketing";
+import ClearDBTab from "./settings/ClearDB";
 
 const SettingsPage = () => {
   const [tab, setTab] = useState("bucketing");
@@ -10,13 +11,13 @@ const SettingsPage = () => {
     { id: "bucketing", label: "Category Bucketing" },
     { id: "presets", label: "Presets" },
     { id: "others", label: "Others" },
+    { id: "clearDB", label: "Clear DB" }, // <-- new tab
   ];
 
   return (
     <div className="flex h-full gap-4 p-4">
       {/* Left section: Back button + Sidebar */}
       <div className="flex flex-col w-60">
-        {/* Back button */}
         <button
           onClick={() => navigate("/")}
           className="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400 mb-4"
@@ -24,7 +25,6 @@ const SettingsPage = () => {
           ← Back
         </button>
 
-        {/* Sidebar */}
         <div className="bg-gray-100 p-4 rounded-xl shadow-sm flex-1 flex flex-col">
           {tabs.map((t) => (
             <div
@@ -45,6 +45,7 @@ const SettingsPage = () => {
         {tab === "bucketing" && <CategoryBucketing />}
         {tab === "presets" && <div>Presets settings here…</div>}
         {tab === "others" && <div>Other settings here…</div>}
+        {tab === "clearDB" && <ClearDBTab />}
       </div>
     </div>
   );
