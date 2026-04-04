@@ -14,7 +14,19 @@ export default function EditTransactionModal({ year, month, day, dayId, transact
     getYearId,
     getMonthId,
     travels,
+    categories,
   } = useExpenseContext();
+
+  const getSuggestion = (input) => {
+  if (!input?.trim()) return null;
+
+  return categories.find(
+    (cat) =>
+      cat.toLowerCase().startsWith(input.toLowerCase()) &&
+      cat.toLowerCase() !== input.toLowerCase()
+  );
+};
+
 
   const [rows, setRows] = useState([]);
   const [deletedRows, setDeletedRows] = useState([]);
@@ -144,14 +156,42 @@ export default function EditTransactionModal({ year, month, day, dayId, transact
                   <tr key={r.id}>
                     {/* CATEGORY */}
                     <td className="border px-3 py-2">
-                      <input
-                        type="text"
-                        value={r.category}
-                        onChange={(e) => updateRow(r.id, "category", e.target.value)}
-                        className="w-full border rounded px-2 py-1"
-                        placeholder="Category"
-                        ref={(el) => (inputRefs.current[`category-${r.id}`] = el)}
-                      />
+                      <div className="relative w-full">
+                        <input
+                          type="text"
+                          value={r.category}
+                          onChange={(e) => updateRow(r.id, "category", e.target.value)}
+                          onKeyDown={(e) => {
+                            const suggestion = getSuggestion(r.category);
+
+                            if (e.key === "Tab" && suggestion) {
+                              e.preventDefault();
+                              updateRow(r.id, "category", suggestion);
+                            }
+                          }}
+                          className="w-full border rounded px-2 py-1 bg-transparent relative"
+                          placeholder="Category"
+                          ref={(el) => (inputRefs.current[`category-${r.id}`] = el)}
+                        />
+
+                        {/* 👻 Ghost text */}
+                        {(() => {
+                          const suggestion = getSuggestion(r.category);
+                          const ghostText = suggestion
+                            ? suggestion.slice(r.category.length)
+                            : "";
+
+                          return (
+                            r.category &&
+                            ghostText && (
+                              <div className="absolute inset-0 px-2 py-1 pointer-events-none text-gray-400">
+                                <span className="invisible">{r.category}</span>
+                                {ghostText}
+                              </div>
+                            )
+                          );
+                        })()}
+                      </div>
                     </td>
 
                     {/* AMOUNT */}

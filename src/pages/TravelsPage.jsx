@@ -2,6 +2,8 @@ import { Link, useNavigate } from "react-router-dom";
 import { useExpenseContext } from "../context/ExpenseContext";
 import { useState } from "react";
 import { Plus, Pencil, Trash2 } from "lucide-react";
+import AddTravelModal from "../components/AddTravelModal";
+import EditTravelModal from "../components/EditTravelModal"; // ✅ NEW
 
 const formatDate = (date) => {
   if (!date) return "-";
@@ -15,24 +17,28 @@ export default function TravelsPage() {
 
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
 
+  // ----------------------
+  // Modal state
+  // ----------------------
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [editTravelId, setEditTravelId] = useState(null);
+
   // ---------------------------
   // Get total cost for travel
   // ---------------------------
   const getTravelTotal = (travelId) => {
     let total = 0;
-
     years.forEach((year) => {
       year.months?.forEach((month) => {
         month.days?.forEach((day) => {
           day.transactions?.forEach((t) => {
-            if (t.travelId === travelId.toLocaleString()) {
+            if (Number(t.travelId) === Number(travelId)) {
               total += Number(t.amount || 0);
             }
           });
         });
       });
     });
-
     return total;
   };
 
@@ -64,7 +70,7 @@ export default function TravelsPage() {
         </h1>
 
         <button
-          onClick={() => navigate("/travels/new")}
+          onClick={() => setShowAddModal(true)}
           className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl transition"
         >
           <Plus size={16} />
@@ -73,9 +79,7 @@ export default function TravelsPage() {
       </div>
 
       {travels?.length === 0 && (
-        <p className="text-gray-500">
-          No travels created yet.
-        </p>
+        <p className="text-gray-500">No travels created yet.</p>
       )}
 
       {/* Travel Grid */}
@@ -91,17 +95,19 @@ export default function TravelsPage() {
             >
               {/* Edit & Delete Buttons */}
               <div className="absolute top-3 right-3 flex gap-2 opacity-0 group-hover:opacity-100 transition">
+                {/* Edit */}
                 <button
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    navigate(`/travels/edit/${travel.id}`);
+                    setEditTravelId(travel.id);
                   }}
                   className="bg-yellow-400 hover:bg-yellow-500 text-white rounded-lg p-1.5 shadow-sm"
                 >
                   <Pencil size={16} />
                 </button>
 
+                {/* Delete */}
                 <button
                   onClick={(e) => handleDelete(e, travel.id)}
                   className={`rounded-lg p-1.5 shadow-sm text-white ${
@@ -121,8 +127,7 @@ export default function TravelsPage() {
 
               {/* Dates */}
               <div className="text-sm text-gray-500 mb-3">
-                {formatDate(travel.startDate)} –{" "}
-                {formatDate(travel.endDate)}
+                {formatDate(travel.startDate)} – {formatDate(travel.endDate)}
               </div>
 
               {/* Total */}
@@ -131,15 +136,28 @@ export default function TravelsPage() {
               </div>
 
               {/* Comments */}
-              {/* {travel.comments && ( */}
-                <div className="text-sm text-gray-500 border-t pt-3 mt-3">
-                  {travel.comments}
-                </div>
-            {/* //   )} */}
+              <div className="text-sm text-gray-500 border-t pt-3 mt-3">
+                {travel.comments}
+              </div>
             </Link>
           );
         })}
       </div>
+
+      {/* ---------------------- */}
+      {/* ADD TRAVEL MODAL */}
+      {/* ---------------------- */}
+      {showAddModal && <AddTravelModal onClose={() => setShowAddModal(false)} />}
+
+      {/* ---------------------- */}
+      {/* EDIT TRAVEL MODAL */}
+      {/* ---------------------- */}
+      {editTravelId && (
+        <EditTravelModal
+          travelId={editTravelId}
+          onClose={() => setEditTravelId(null)}
+        />
+      )}
     </div>
   );
 }
