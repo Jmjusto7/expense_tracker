@@ -1,5 +1,6 @@
 // src/utils/transactionFilter.js
 import { monthIndexOf } from "./dateHelpers";
+import { classifyTransaction, matchesBucketAndCategoryFilter } from "./transactionClassification";
 import { TRAVEL_FILTER_ID } from "./travelHelpers";
 
 // Date-range portion only. Split out because SummaryPage needs this stage
@@ -17,29 +18,44 @@ export function transactionMatchesDate(t, { fromDate, toDate }) {
 
 // Bucket/Travel + category portion only, assuming date has already passed
 // (or isn't being checked).
+// Uses native classification: travel-tagged transactions belong to Travel
+// bucket exclusively, not their category's normal bucket.
+// 
+// Supports 3-level Travel drill-down: Travel -> Bucket -> Category
+// When travelDrillBucketId is set and Travel is selected, filters travel
+// transactions by their category's bucket (ignoring travel override).
 export function transactionMatchesBucketAndCategory(
   t,
-  { selectedBucketIds, selectedCategoryFilters, buckets }
+  { selectedBucketIds, selectedCategoryFilters, buckets, travelDrillBucketId }
 ) {
-  if (selectedBucketIds.length > 0) {
-    const realBucketIds = selectedBucketIds.filter((id) => id !== TRAVEL_FILTER_ID);
-    const includesTravel = selectedBucketIds.includes(TRAVEL_FILTER_ID);
+  const isTravelSelected = selectedBucketIds.includes(TRAVEL_FILTER_ID);
 
-    const allowedCats = buckets
-      .filter((b) => realBucketIds.includes(b.id))
-      .flatMap((b) => b.categories);
+  // Travel -> Bucket -> Category (3-level drill-down)
+  if (isTravelSelected && selectedBucketIds.length === 1 && travelDrillBucketId) {
+    // Must be a travel-tagged transaction
+    if (t.travelId == null) return false;
 
-    const inBucket = allowedCats.includes(t.category);
-    const isTravelTagged = includesTravel && t.travelId != null;
+    // Classify by category's bucket (ignore travel override)
+    const classified = classifyTransaction(t, buckets, { ignoreTravelOverride: true });
 
-    if (!inBucket && !isTravelTagged) return false;
+    // Must match the drill-down bucket
+    if (classified.effectiveBucketId !== travelDrillBucketId) return false;
+
+    // Apply category filter if any
+    if (selectedCategoryFilters.length > 0) {
+      return selectedCategoryFilters.includes(classified.category);
+    }
+
+    return true;
   }
 
-  if (selectedCategoryFilters.length > 0 && !selectedCategoryFilters.includes(t.category)) {
-    return false;
-  }
+  // Standard classification flow
+  const classified = classifyTransaction(t, buckets);
 
-  return true;
+  return matchesBucketAndCategoryFilter(classified, {
+    selectedBucketIds,
+    selectedCategoryFilters,
+  });
 }
 
 // Full filter: date range + bucket/Travel + category. This is what every

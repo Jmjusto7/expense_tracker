@@ -8,8 +8,8 @@ function Chip({ children, onRemove, accent = "ledger" }) {
     accent === "travel"
       ? "bg-travel-soft text-travel-dark border-travel/30"
       : accent === "neutral"
-      ? "bg-surface-sunken text-ink-muted border-border"
-      : "bg-ledger-soft text-ledger-dark border-ledger/30";
+        ? "bg-surface-sunken text-ink-muted border-border"
+        : "bg-ledger-soft text-ledger-dark border-ledger/30";
 
   return (
     <span className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border ${styles}`}>
@@ -30,11 +30,13 @@ export default function FilterBar() {
     toDate,
     selectedBucketIds,
     selectedCategoryFilters,
+    travelDrillBucketId,
     hasActiveFilters,
     clearFilters,
     clearDateRange,
     removeBucketFilter,
     removeCategoryFilter,
+    removeTravelDrillBucket,
   } = useFilter();
 
   if (!hasActiveFilters) return null;
@@ -42,9 +44,14 @@ export default function FilterBar() {
   const dateLabel = fromDate && toDate
     ? `${formatMonthYear(fromDate)} – ${formatMonthYear(toDate)}`
     : fromDate
-    ? `From ${formatMonthYear(fromDate)}`
-    : toDate
-    ? `Until ${formatMonthYear(toDate)}`
+      ? `From ${formatMonthYear(fromDate)}`
+      : toDate
+        ? `Until ${formatMonthYear(toDate)}`
+        : null;
+
+  // Find the drill bucket name for display
+  const travelDrillBucketName = travelDrillBucketId
+    ? buckets.find((b) => b.id === travelDrillBucketId)?.name
     : null;
 
   return (
@@ -67,6 +74,13 @@ export default function FilterBar() {
             {buckets.find((b) => b.id === id)?.name || "Bucket"}
           </Chip>
         )
+      )}
+
+      {/* Travel drill-down bucket (Travel -> Bucket level) */}
+      {travelDrillBucketName && (
+        <Chip accent="travel" onRemove={removeTravelDrillBucket}>
+          → {travelDrillBucketName}
+        </Chip>
       )}
 
       {selectedCategoryFilters.map((cat) => (

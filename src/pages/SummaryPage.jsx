@@ -34,6 +34,10 @@ const SummaryPage = () => {
     setSelectedBucketIds,
     selectedCategoryFilters,
     setSelectedCategoryFilters,
+    travelDrillBucketId,
+    setTravelDrillBucketId,
+    isTravelSelected,
+    travelScopedClassifiedTx,
     hasActiveFilters,
     clearFilters,
     matchesDate,
@@ -45,14 +49,6 @@ const SummaryPage = () => {
   // Summary chooses to group its chart).
   // -------------------------
   const [useBuckets, setUseBuckets] = useState(true);
-
-  // -------------------------
-  // Travel 3-level drill-down state:
-  // Level 1: Top buckets (Travel is one bucket)
-  // Level 2: Buckets within Travel (when travelDrillBucketId === null but Travel is selected)
-  // Level 3: Categories within a bucket inside Travel (when travelDrillBucketId is set)
-  // -------------------------
-  const [travelDrillBucketId, setTravelDrillBucketId] = useState(null);
 
   // Are we currently drilling inside Travel?
   const isInsideTravelDrill = selectedBucketIds.length === 1 && selectedBucketIds[0] === TRAVEL_FILTER_ID;
@@ -69,13 +65,6 @@ const SummaryPage = () => {
   // Classify all time-filtered transactions with their effective bucket
   const classifiedTx = useMemo(() => {
     return classifyTransactions(timeFilteredTx, buckets);
-  }, [timeFilteredTx, buckets]);
-
-  // For Travel drill-down: travel-tagged transactions reclassified by their
-  // category's bucket (ignoreTravelOverride). Used for Level 2 & 3.
-  const travelScopedClassifiedTx = useMemo(() => {
-    const travelOnly = timeFilteredTx.filter((t) => t.travelId != null);
-    return classifyTransactions(travelOnly, buckets, { ignoreTravelOverride: true });
   }, [timeFilteredTx, buckets]);
 
   // Categories that appear on any travel-tagged transaction. Powers the

@@ -7,8 +7,11 @@ import { formatCurrency, formatCurrencyPrecise } from "../utils/formatCurrency";
 import { filterTransactionsByTravel, sumAmounts, findTravelById } from "../utils/travelHelpers";
 import { useBucketsWithCategories } from "../hooks/useBucketsWithCategories";
 import ExpensePieChart from "../components/ExpensePieChart";
-import BreakdownGrid from "../components/BreakdownGrid";
-import Breadcrumbs from "../components/Breadcrumbs";
+import BreakdownGrid from "../components/BreakdownGrid"; import {
+  classifyTransactions,
+  groupByEffectiveBucket,
+  groupByCategory,
+} from "../utils/transactionClassification"; import Breadcrumbs from "../components/Breadcrumbs";
 
 export default function TravelDetailPage() {
   const { travelId } = useParams();
@@ -18,6 +21,12 @@ export default function TravelDetailPage() {
   const travel = findTravelById(travels, travelId);
   const transactions = filterTransactionsByTravel(allTransactions, travelId);
   const total = sumAmounts(transactions);
+
+  // Classify transactions for this travel - use ignoreTravelOverride since
+  // we're inside the travel context and want category-bucket breakdown.
+  const classifiedTx = useMemo(() => {
+    return classifyTransactions(transactions, buckets, { ignoreTravelOverride: true });
+  }, [transactions, buckets]);
 
   // -------------------------
   // Drill-down state: null = bucket level. Once a bucket is picked,
@@ -31,32 +40,21 @@ export default function TravelDetailPage() {
 
   // -------------------------
   // Level 1: spend by bucket, for this travel's transactions only
+  // Uses classification layer with ignoreTravelOverride for category-bucket grouping.
   // -------------------------
   const bucketLevelData = useMemo(() => {
-    const bucketedCategories = new Set(buckets.flatMap((b) => b.categories));
+    const bucketGroups = groupByEffectiveBucket(classifiedTx);
+    const sum = [...bucketGroups.values()].reduce((s, g) => s + g.total, 0);
 
-    const result = buckets.reduce((acc, b) => {
-      const amt = transactions
-        .filter((t) => b.categories.includes(t.category))
-        .reduce((s, t) => s + Number(t.amount || 0), 0);
-      if (amt > 0) acc.push({ category: b.name, amount: amt, bucketId: b.id });
-      return acc;
-    }, []);
-
-    const unassignedAmt = transactions
-      .filter((t) => t.category && !bucketedCategories.has(t.category))
-      .reduce((s, t) => s + Number(t.amount || 0), 0);
-
-    if (unassignedAmt > 0) {
-      result.push({ category: "Unassigned", amount: unassignedAmt, bucketId: null });
-    }
-
-    const sum = result.reduce((s, x) => s + x.amount, 0);
-    return result.map((x) => ({
-      ...x,
-      percent: sum ? ((x.amount / sum) * 100).toFixed(1) : 0,
-    }));
-  }, [transactions, buckets]);
+    return [...bucketGroups.values()]
+      .filter((g) => g.total > 0)
+      .map((g) => ({
+        category: g.bucketLabel,
+        amount: g.total,
+        bucketId: g.bucketId,
+        percent: sum ? ((g.total / sum) * 100).toFixed(1) : 0,
+      }));
+  }, [classifiedTx]);
 
   // -------------------------
   // Level 2: spend by category, scoped to the drilled-into bucket
@@ -64,20 +62,18 @@ export default function TravelDetailPage() {
   const categoryLevelData = useMemo(() => {
     if (!drillBucket) return [];
 
-    const map = {};
-    transactions
-      .filter((t) => drillBucket.categories.includes(t.category))
-      .forEach((t) => {
-        map[t.category] = (map[t.category] || 0) + Number(t.amount || 0);
-      });
+    const scopedTx = classifiedTx.filter((t) => t.effectiveBucketId === drillBucket.id);
+    const categoryGroups = groupByCategory(scopedTx);
+    const sum = [...categoryGroups.values()].reduce((s, g) => s + g.total, 0);
 
-    const sum = Object.values(map).reduce((a, b) => a + b, 0);
-    return Object.entries(map).map(([category, amount]) => ({
-      category,
-      amount,
-      percent: sum ? ((amount / sum) * 100).toFixed(1) : 0,
-    }));
-  }, [transactions, drillBucket]);
+    return [...categoryGroups.values()]
+      .filter((g) => g.total > 0)
+      .map((g) => ({
+        category: g.category,
+        amount: g.total,
+        percent: sum ? ((g.total / sum) * 100).toFixed(1) : 0,
+      }));
+  }, [classifiedTx, drillBucket]);
 
   const currentLevelData = drillBucket ? categoryLevelData : bucketLevelData;
 
@@ -111,12 +107,13 @@ export default function TravelDetailPage() {
 
   // -------------------------
   // Transaction table scope follows the current drill-down
+  // Uses classification for consistent bucket filtering.
   // -------------------------
   const visibleTransactions = useMemo(() => {
-    if (selectedCategory) return transactions.filter((t) => t.category === selectedCategory);
-    if (drillBucket) return transactions.filter((t) => drillBucket.categories.includes(t.category));
-    return transactions;
-  }, [transactions, drillBucket, selectedCategory]);
+    if (selectedCategory) return classifiedTx.filter((t) => t.category === selectedCategory);
+    if (drillBucket) return classifiedTx.filter((t) => t.effectiveBucketId === drillBucket.id);
+    return classifiedTx;
+  }, [classifiedTx, drillBucket, selectedCategory]);
 
   const resetDrill = () => {
     setDrillBucketId(null);

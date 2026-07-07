@@ -471,11 +471,17 @@ export function ExpenseProvider({ children }) {
 
   // Removes bucket assignments for categories that no longer exist on any
   // transaction (e.g. the transaction was deleted, or the category was
-  // renamed). Reads live categories from `allTransactions` rather than a
-  // second DB round-trip.
+  // renamed). Fetches categories directly from DB to avoid closure issues
+  // with potentially stale/empty `categories` memo.
   const cleanBucketAssignments = withErrorHandling("cleanBucketAssignments", async () => {
     const assignments = await db.bucketAssignments.toArray();
-    const existingCategories = new Set(categories);
+    
+    // Get current categories directly from DB to avoid stale closure
+    const allTx = await db.transactions.toArray();
+    const existingCategories = new Set(allTx.map((t) => t.category).filter(Boolean));
+
+    // Only delete assignments if we actually have transactions (avoid wiping on empty load)
+    if (allTx.length === 0) return;
 
     const invalidAssignments = assignments.filter((a) => !existingCategories.has(a.category));
 
