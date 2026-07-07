@@ -1,21 +1,16 @@
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { useExpenseContext } from "../context/ExpenseContext";
 import { useState } from "react";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Plane } from "lucide-react";
 import AddTravelModal from "../components/AddTravelModal";
-import EditTravelModal from "../components/EditTravelModal"; // ✅ NEW
-
-const formatDate = (date) => {
-  if (!date) return "-";
-  const d = date instanceof Date ? date : new Date(date);
-  return d.toLocaleDateString();
-};
+import EditTravelModal from "../components/EditTravelModal";
+import ConfirmButton from "../components/ConfirmButton";
+import { formatDate } from "../utils/dateHelpers";
+import { formatCurrency } from "../utils/formatCurrency";
+import { filterTransactionsByTravel, sumAmounts } from "../utils/travelHelpers";
 
 export default function TravelsPage() {
-  const navigate = useNavigate();
-  const { travels, years, removeTravel } = useExpenseContext();
-
-  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const { travels, allTransactions, removeTravel } = useExpenseContext();
 
   // ----------------------
   // Modal state
@@ -26,52 +21,18 @@ export default function TravelsPage() {
   // ---------------------------
   // Get total cost for travel
   // ---------------------------
-  const getTravelTotal = (travelId) => {
-    let total = 0;
-    years.forEach((year) => {
-      year.months?.forEach((month) => {
-        month.days?.forEach((day) => {
-          day.transactions?.forEach((t) => {
-            if (Number(t.travelId) === Number(travelId)) {
-              total += Number(t.amount || 0);
-            }
-          });
-        });
-      });
-    });
-    return total;
-  };
-
-  const handleDelete = async (e, id) => {
-    e.stopPropagation();
-    e.preventDefault();
-
-    if (confirmDeleteId === id) {
-      await removeTravel(id);
-      setConfirmDeleteId(null);
-    } else {
-      setConfirmDeleteId(id);
-    }
-  };
+  const getTravelTotal = (travelId) =>
+    sumAmounts(filterTransactionsByTravel(allTransactions, travelId));
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
+    <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
       {/* Header */}
       <div className="flex justify-between items-center mb-6 gap-2">
-        <button
-          onClick={() => navigate("/")}
-          className="text-sm text-gray-500 hover:text-gray-700"
-        >
-          ← Back
-        </button>
-
-        <h1 className="text-2xl font-bold text-indigo-700">
-          Travel Summary
-        </h1>
+        <h1 className="font-display text-2xl text-ink">Travels</h1>
 
         <button
           onClick={() => setShowAddModal(true)}
-          className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl transition"
+          className="flex items-center gap-2 bg-travel hover:bg-travel-dark text-white px-4 py-2 rounded-lg transition-colors"
         >
           <Plus size={16} />
           Add Travel
@@ -79,11 +40,11 @@ export default function TravelsPage() {
       </div>
 
       {travels?.length === 0 && (
-        <p className="text-gray-500">No travels created yet.</p>
+        <p className="text-ink-muted">No travels created yet.</p>
       )}
 
       {/* Travel Grid */}
-      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
         {travels?.map((travel) => {
           const total = getTravelTotal(travel.id);
 
@@ -91,67 +52,64 @@ export default function TravelsPage() {
             <Link
               key={travel.id}
               to={`/travels/${travel.id}`}
-              className="group bg-white rounded-2xl shadow-sm border border-gray-100 p-5 hover:shadow-md transition relative block"
+              className="group bg-surface rounded-lg border border-border hover:border-travel p-5 transition-colors relative block"
             >
               {/* Edit & Delete Buttons */}
-              <div className="absolute top-3 right-3 flex gap-2 opacity-0 group-hover:opacity-100 transition">
-                {/* Edit */}
+              <div className="absolute top-3 right-3 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
                 <button
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
                     setEditTravelId(travel.id);
                   }}
-                  className="bg-yellow-400 hover:bg-yellow-500 text-white rounded-lg p-1.5 shadow-sm"
+                  className="bg-surface border border-border text-ink-muted hover:text-ink rounded-md p-1.5"
                 >
-                  <Pencil size={16} />
+                  <Pencil size={14} />
                 </button>
 
-                {/* Delete */}
-                <button
-                  onClick={(e) => handleDelete(e, travel.id)}
-                  className={`rounded-lg p-1.5 shadow-sm text-white ${
-                    confirmDeleteId === travel.id
-                      ? "bg-red-600"
-                      : "bg-red-400 hover:bg-red-500"
-                  }`}
+                <ConfirmButton
+                  onConfirm={() => removeTravel(travel.id)}
+                  className="bg-surface border border-border text-ink-muted hover:text-alert rounded-md p-1.5"
+                  confirmClassName="bg-alert text-white border border-alert rounded-md p-1.5 text-xs font-medium px-2"
+                  title="Delete travel"
                 >
-                  <Trash2 size={16} />
-                </button>
+                  <Trash2 size={14} />
+                </ConfirmButton>
               </div>
 
               {/* Title */}
-              <h2 className="text-lg font-semibold text-gray-800 mb-2 pr-16">
-                {travel.title}
-              </h2>
+              <div className="flex items-center gap-1.5 mb-2 pr-14">
+                <Plane size={15} className="text-travel-dark shrink-0" />
+                <h2 className="text-lg font-semibold text-ink truncate">
+                  {travel.title}
+                </h2>
+              </div>
 
               {/* Dates */}
-              <div className="text-sm text-gray-500 mb-3">
+              <div className="text-sm text-ink-muted mb-3">
                 {formatDate(travel.startDate)} – {formatDate(travel.endDate)}
               </div>
 
               {/* Total */}
-              <div className="text-xl font-bold text-indigo-600 mb-3">
-                ₱{total.toLocaleString()}
+              <div className="money text-xl font-bold text-travel-dark mb-3">
+                {formatCurrency(total)}
               </div>
 
               {/* Comments */}
-              <div className="text-sm text-gray-500 border-t pt-3 mt-3">
-                {travel.comments}
-              </div>
+              {travel.comments && (
+                <div className="text-sm text-ink-muted border-t border-border pt-3 mt-3">
+                  {travel.comments}
+                </div>
+              )}
             </Link>
           );
         })}
       </div>
 
-      {/* ---------------------- */}
       {/* ADD TRAVEL MODAL */}
-      {/* ---------------------- */}
       {showAddModal && <AddTravelModal onClose={() => setShowAddModal(false)} />}
 
-      {/* ---------------------- */}
       {/* EDIT TRAVEL MODAL */}
-      {/* ---------------------- */}
       {editTravelId && (
         <EditTravelModal
           travelId={editTravelId}

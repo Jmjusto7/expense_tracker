@@ -4,20 +4,28 @@ import DatePicker from "react-date-picker";
 import "react-date-picker/dist/DatePicker.css";
 import "react-calendar/dist/Calendar.css";
 import { useExpenseContext } from "../context/ExpenseContext";
-import AddTravelModal from "./AddTravelModal";
-
-const ALL_MONTHS = [
-  "January","February","March","April","May","June",
-  "July","August","September","October","November","December",
-];
+import { ALL_MONTHS, computeDefaultTransactionDate } from "../utils/dateHelpers";
+import { parseAmountExpression } from "../utils/amountHelpers";
+import { useInlineAddTravel } from "../hooks/useInlineAddTravel";
+import CategoryAutocompleteInput from "./transaction-row/CategoryAutocompleteInput";
+import TravelSelectCell from "./transaction-row/TravelSelectCell";
 
 const getRowId = () => Date.now() + Math.floor(Math.random() * 1000);
+
+const blankRow = () => ({
+  id: getRowId(),
+  category: "",
+  amount: "",
+  comments: "",
+  travelId: "",
+});
 
 export default function AddTransactionModal({
   year,
   month,
   existingDays = [],
-  onClose
+  onClose,
+  onSaved,
 }) {
   const {
     addDay,
@@ -28,78 +36,33 @@ export default function AddTransactionModal({
     travels
   } = useExpenseContext();
 
-  const [selectedDate, setSelectedDate] = useState(null);
-  const [isCalendarOpen, setIsCalendarOpen] = useState(true);
-  const [showAddTravelModal, setShowAddTravelModal] = useState(false);
+  const monthIndex = ALL_MONTHS.indexOf(month);
+  const defaultDate = computeDefaultTransactionDate(year, monthIndex, existingDays);
 
-  const [rows, setRows] = useState([
-    {
-      id: getRowId(),
-      category: "",
-      amount: "",
-      comments: "",
-      travelId: "",
-    },
-  ]);
+  const [selectedDate, setSelectedDate] = useState(defaultDate);
+  const [isCalendarOpen, setIsCalendarOpen] = useState(!defaultDate);
+  const [rows, setRows] = useState([blankRow()]);
 
   const inputRefs = useRef({});
-  const monthIndex = ALL_MONTHS.indexOf(month);
-
-  // -----------------------
-  // Row Management
-  // -----------------------
-  const handleAddRow = () => {
-    const newRow = {
-      id: getRowId(),
-      category: "",
-      amount: "",
-      comments: "",
-      travelId: "",
-    };
-
-    setRows(prev => [...prev, newRow]);
-
-    setTimeout(() => {
-      inputRefs.current[`category-${newRow.id}`]?.focus();
-    }, 50);
-  };
 
   const handleChange = (id, field, value) => {
     setRows(rows.map(r => (r.id === id ? { ...r, [field]: value } : r)));
   };
 
-  // -----------------------
-  // Category Auto Suggest
-  // -----------------------
-  const getSuggestion = (input) => {
-    if (!input?.trim()) return null;
-
-    return categories.find(
-      cat =>
-        cat.toLowerCase().startsWith(input.toLowerCase()) &&
-        cat.toLowerCase() !== input.toLowerCase()
-    );
-  };
+  const { requestAddTravel, inlineAddTravelModal } = useInlineAddTravel(
+    (rowId, newTravelId) => handleChange(rowId, "travelId", newTravelId)
+  );
 
   // -----------------------
-  // Amount Parsing
+  // Row Management
   // -----------------------
-  const parseAmount = (expr) => {
-    if (!expr) return { total: NaN, breakdown: [] };
+  const handleAddRow = () => {
+    const newRow = blankRow();
+    setRows(prev => [...prev, newRow]);
 
-    const cleaned = expr.replace(/\s+/g, "");
-    if (!/^[-\d.,]+$/.test(cleaned))
-      return { total: NaN, breakdown: [] };
-
-    const breakdown = cleaned
-      .split(",")
-      .map(v => parseFloat(v))
-      .filter(v => !isNaN(v));
-
-    return {
-      total: breakdown.reduce((a, b) => a + b, 0),
-      breakdown,
-    };
+    setTimeout(() => {
+      inputRefs.current[`category-${newRow.id}`]?.focus();
+    }, 50);
   };
 
   // -----------------------
@@ -130,7 +93,7 @@ export default function AddTransactionModal({
       const dayId = await addDay(yearId, monthId, dayNumber);
 
       for (const r of validRows) {
-        const { total, breakdown } = parseAmount(r.amount);
+        const { total, breakdown } = parseAmountExpression(r.amount);
 
         if (isNaN(total))
           return alert(`Invalid amount in category "${r.category}"`);
@@ -144,6 +107,7 @@ export default function AddTransactionModal({
         });
       }
 
+      onSaved?.();
       onClose();
     } catch (err) {
       console.error("Failed to save transactions:", err);
@@ -163,22 +127,22 @@ export default function AddTransactionModal({
 
   return (
     <>
-      <div className="fixed inset-0 flex items-center justify-center bg-black/40 z-50">
-        <div className="bg-white w-[80%] max-w-7xl rounded-xl shadow-lg p-6 relative">
+      <div className="fixed inset-0 flex items-center justify-center bg-ink/40 z-50">
+        <div className="bg-surface w-[80%] max-w-7xl rounded-xl shadow-lg p-6 relative">
           <button
             onClick={onClose}
-            className="absolute top-3 right-3 text-gray-500 hover:text-gray-700"
+            className="absolute top-3 right-3 text-ink-muted hover:text-ink"
           >
             <X size={18} />
           </button>
 
-          <h2 className="text-2xl font-semibold mb-6 text-indigo-700">
+          <h2 className="font-display text-xl text-ink mb-6">
             Add Transactions — {month} {year}
           </h2>
 
           {/* DATE PICKER */}
           <div className="mb-6">
-            <label className="text-sm text-gray-600 mb-1 block">
+            <label className="text-sm text-ink-muted mb-1 block">
               Select a Date
             </label>
 
@@ -210,121 +174,74 @@ export default function AddTransactionModal({
           <div className="overflow-x-auto mb-4">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="bg-gray-100">
-                  <th className="border px-3 py-2 w-[18%]">Category</th>
-                  <th className="border px-3 py-2 w-[28%]">Amount</th>
-                  <th className="border px-3 py-2 w-[22%]">Travel</th>
-                  <th className="border px-3 py-2 w-[32%]">Comments</th>
+                <tr className="bg-surface-sunken text-ink-muted text-xs uppercase tracking-wide">
+                  <th className="border border-border px-3 py-2 w-[18%] font-medium">Category</th>
+                  <th className="border border-border px-3 py-2 w-[28%] font-medium">Amount</th>
+                  <th className="border border-border px-3 py-2 w-[22%] font-medium">Travel</th>
+                  <th className="border border-border px-3 py-2 w-[32%] font-medium">Comments</th>
                 </tr>
               </thead>
 
               <tbody>
-                {rows.map((r, i) => {
-                  const suggestion = getSuggestion(r.category);
-                  const ghostText = suggestion
-                    ? suggestion.slice(r.category.length)
-                    : "";
+                {rows.map((r, i) => (
+                  <tr key={r.id}>
+                    {/* CATEGORY */}
+                    <td className="border border-border px-3 py-2">
+                      <CategoryAutocompleteInput
+                        value={r.category}
+                        onChange={(val) => handleChange(r.id, "category", val)}
+                        categories={categories}
+                        disabled={!selectedDate}
+                        inputRef={(el) => (inputRefs.current[`category-${r.id}`] = el)}
+                      />
+                    </td>
 
-                  return (
-                    <tr key={r.id}>
-                      {/* CATEGORY */}
-                      <td className="border px-3 py-2">
-                        <div className="relative w-full">
-                          <input
-                            type="text"
-                            value={r.category}
-                            onChange={(e) =>
-                              handleChange(r.id, "category", e.target.value)
-                            }
-                            onKeyDown={(e) => {
-                              if (e.key === "Tab" && suggestion) {
-                                e.preventDefault();
-                                handleChange(r.id, "category", suggestion);
-                              }
-                            }}
-                            className="w-full border rounded px-2 py-1 bg-transparent relative"
-                            placeholder="Category"
-                            disabled={!selectedDate}
-                          />
+                    {/* AMOUNT */}
+                    <td className="border border-border px-3 py-2">
+                      <input
+                        type="text"
+                        value={r.amount}
+                        onChange={(e) =>
+                          handleChange(r.id, "amount", e.target.value)
+                        }
+                        className="money w-full border border-border rounded-md px-2 py-1.5 text-sm bg-transparent text-ink focus:ring-2 focus:ring-ledger focus:outline-none disabled:opacity-50"
+                        disabled={!selectedDate}
+                      />
+                    </td>
 
-                          {r.category && ghostText && (
-                            <div className="absolute inset-0 px-2 py-1 pointer-events-none text-gray-400">
-                              <span className="invisible">
-                                {r.category}
-                              </span>
-                              {ghostText}
-                            </div>
-                          )}
-                        </div>
-                      </td>
+                    {/* TRAVEL SELECT */}
+                    <td className="border border-border px-3 py-2">
+                      <TravelSelectCell
+                        value={r.travelId}
+                        onChange={(val) => handleChange(r.id, "travelId", val)}
+                        onRequestAdd={() => requestAddTravel(r.id)}
+                        travels={travels}
+                        disabled={!selectedDate}
+                      />
+                    </td>
 
-                      {/* AMOUNT */}
-                      <td className="border px-3 py-2">
-                        <input
-                          type="text"
-                          value={r.amount}
-                          onChange={(e) =>
-                            handleChange(r.id, "amount", e.target.value)
-                          }
-                          className="w-full border rounded px-2 py-1 font-mono"
-                          disabled={!selectedDate}
-                        />
-                      </td>
-
-                      {/* TRAVEL SELECT */}
-                      <td className="border px-3 py-2">
-                        <select
-                          value={r.travelId}
-                          onChange={(e) => {
-                            const val = e.target.value;
-
-                            if (val === "__add__") {
-                              setShowAddTravelModal(true);
-                              return;
-                            }
-
-                            handleChange(r.id, "travelId", val);
-                          }}
-                          disabled={!selectedDate}
-                          className="w-full border rounded px-2 py-1 bg-white"
-                        >
-                          <option value="">— No Travel —</option>
-
-                          {travels?.map(travel => (
-                            <option key={travel.id} value={travel.id}>
-                              {travel.title}
-                            </option>
-                          ))}
-
-                          <option value="__add__">
-                            + Add Travel
-                          </option>
-                        </select>
-                      </td>
-
-                      {/* COMMENTS */}
-                      <td className="border px-3 py-2">
-                        <input
-                          type="text"
-                          value={r.comments}
-                          onChange={(e) =>
-                            handleChange(r.id, "comments", e.target.value)
-                          }
-                          onKeyDown={(e) => handleCommentKeyDown(e, i)}
-                          className="w-full border rounded px-2 py-1"
-                          disabled={!selectedDate}
-                        />
-                      </td>
-                    </tr>
-                  );
-                })}
+                    {/* COMMENTS */}
+                    <td className="border border-border px-3 py-2">
+                      <input
+                        type="text"
+                        value={r.comments}
+                        onChange={(e) =>
+                          handleChange(r.id, "comments", e.target.value)
+                        }
+                        onKeyDown={(e) => handleCommentKeyDown(e, i)}
+                        className="w-full border border-border rounded-md px-2 py-1.5 text-sm bg-transparent text-ink focus:ring-2 focus:ring-ledger focus:outline-none disabled:opacity-50"
+                        disabled={!selectedDate}
+                      />
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
 
           <button
             onClick={handleAddRow}
-            className="text-sm text-indigo-600 hover:underline mb-3"
+            className="text-sm text-ledger-dark hover:underline mb-3 disabled:opacity-50 disabled:cursor-not-allowed"
             disabled={!selectedDate}
           >
             + Add Row
@@ -333,14 +250,14 @@ export default function AddTransactionModal({
           <div className="flex justify-end gap-3">
             <button
               onClick={onClose}
-              className="border border-gray-300 text-gray-600 px-4 py-2 rounded-lg hover:bg-gray-100"
+              className="border border-border text-ink-muted px-4 py-2 rounded-lg hover:bg-surface-sunken transition-colors"
             >
               Cancel
             </button>
 
             <button
               onClick={handleSave}
-              className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700"
+              className="bg-ledger text-white px-4 py-2 rounded-lg hover:bg-ledger-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               disabled={!selectedDate}
             >
               Save
@@ -349,12 +266,7 @@ export default function AddTransactionModal({
         </div>
       </div>
 
-      {/* ADD TRAVEL MODAL */}
-      {showAddTravelModal && (
-        <AddTravelModal
-          onClose={() => setShowAddTravelModal(false)}
-        />
-      )}
+      {inlineAddTravelModal}
     </>
   );
 }

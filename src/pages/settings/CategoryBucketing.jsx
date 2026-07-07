@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useExpenseContext } from "../../context/ExpenseContext";
+import ConfirmButton from "../../components/ConfirmButton";
 
 const CategoryBucketing = () => {
   const {
@@ -24,7 +25,7 @@ const CategoryBucketing = () => {
 
   useEffect(() => {
     const init = async () => {
-      await cleanBucketAssignments(categories); // remove invalid category assignments
+      await cleanBucketAssignments(); // remove invalid category assignments
       await load();                   // then load buckets with updated assignments
     };
 
@@ -45,20 +46,20 @@ const CategoryBucketing = () => {
   };
 
   return (
-    <div className="max-w-3xl mx-auto p-4">
-      <h2 className="text-xl font-semibold mb-4">Category Bucketing</h2>
+    <div>
+      <h2 className="text-lg font-semibold text-ink mb-4">Category Bucketing</h2>
 
       {/* Add new bucket */}
-      <div className="flex gap-2 mb-4">
+      <div className="flex gap-2 mb-5">
         <input
           value={newBucket}
           onChange={(e) => setNewBucket(e.target.value)}
           placeholder="New bucket name"
-          className="border p-2 rounded w-60"
+          className="border border-border rounded-md px-3 py-2 w-60 bg-surface focus:ring-2 focus:ring-ledger focus:outline-none"
         />
         <button
           onClick={handleAddBucket}
-          className="bg-indigo-500 text-white px-4 py-2 rounded"
+          className="bg-ledger hover:bg-ledger-dark text-white px-4 py-2 rounded-md text-sm font-medium transition-colors"
         >
           Add Bucket
         </button>
@@ -66,76 +67,80 @@ const CategoryBucketing = () => {
 
       {/* Bucket list */}
       {buckets.length === 0 ? (
-        <p className="text-gray-500">No buckets yet. Add a bucket above.</p>
+        <p className="text-ink-muted text-sm">No buckets yet. Add a bucket above.</p>
       ) : (
-        buckets.map((bucket) => (
-          <div key={bucket.id} className="p-4 border rounded mb-4">
-            <div className="flex justify-between items-center mb-2">
-              <h3 className="text-lg font-medium">{bucket.name}</h3>
-              <button
-                onClick={() => removeBucket(bucket.id).then(load)}
-                className="text-red-500"
-              >
-                Remove
-              </button>
-            </div>
-
-            {categories.length === 0 ? (
-              <p className="text-gray-400 text-sm">No categories available.</p>
-            ) : (
-              <div className="grid grid-cols-4 gap-2">
-                {categories.map((cat) => {
-                  const assignedToThisBucket = bucket.categories?.includes(cat) ?? false;
-
-                  const assignedToOtherBucket = buckets.some(
-                    (b) => b.id !== bucket.id && b.categories?.includes(cat)
-                  );
-
-                  return (
-                    <label
-                      key={cat}
-                      className="flex items-center gap-2 p-1 rounded cursor-pointer"
-                      onClick={() => handleAssign(bucket.id, cat)}
-                    >
-                      {/* HIDDEN REAL CHECKBOX */}
-                      <input type="checkbox" className="hidden" checked={assignedToThisBucket} readOnly />
-
-                      {/* CUSTOM BOX */}
-                      <div
-                        className={`
-                          h-4 w-4 rounded border
-                          flex items-center justify-center
-                          ${
-                            assignedToThisBucket
-                              ? "bg-blue-500 border-blue-600"
-                              : assignedToOtherBucket
-                              ? "bg-gray-400 border-gray-500"
-                              : "bg-white border-gray-400"
-                          }
-                        `}
-                      >
-                        {assignedToThisBucket && (
-                          <div className="w-2 h-2 bg-white rounded-sm"></div>
-                        )}
-                      </div>
-
-                      <span
-                        className={
-                          assignedToOtherBucket && !assignedToThisBucket
-                            ? "text-gray-400"
-                            : ""
-                        }
-                      >
-                        {cat}
-                      </span>
-                    </label>
-                  );
-                })}
-
+        <div className="space-y-4">
+          {buckets.map((bucket) => (
+            <div key={bucket.id} className="p-4 border border-border rounded-lg">
+              <div className="flex justify-between items-center mb-3">
+                <h3 className="text-base font-medium text-ink">{bucket.name}</h3>
+                <ConfirmButton
+                  onConfirm={() => removeBucket(bucket.id).then(load)}
+                  className="text-sm text-alert hover:underline"
+                  confirmClassName="text-sm text-white bg-alert px-2 py-0.5 rounded-md"
+                  confirmLabel="Confirm remove?"
+                  title={`Remove "${bucket.name}"? Its categories become Unassigned.`}
+                >
+                  Remove
+                </ConfirmButton>
               </div>
-            )}
-          </div>
-        ))
+
+              {categories.length === 0 ? (
+                <p className="text-ink-muted text-sm">No categories available.</p>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {categories.map((cat) => {
+                    const assignedToThisBucket = bucket.categories?.includes(cat) ?? false;
+
+                    const assignedToOtherBucket = buckets.some(
+                      (b) => b.id !== bucket.id && b.categories?.includes(cat)
+                    );
+
+                    return (
+                      <label
+                        key={cat}
+                        className="flex items-center gap-2 p-1 rounded cursor-pointer"
+                        onClick={() => handleAssign(bucket.id, cat)}
+                      >
+                        {/* HIDDEN REAL CHECKBOX */}
+                        <input type="checkbox" className="hidden" checked={assignedToThisBucket} readOnly />
+
+                        {/* CUSTOM BOX */}
+                        <div
+                          className={`
+                            h-4 w-4 rounded border shrink-0
+                            flex items-center justify-center
+                            ${
+                              assignedToThisBucket
+                                ? "bg-ledger border-ledger-dark"
+                                : assignedToOtherBucket
+                                ? "bg-ink-muted/40 border-ink-muted/60"
+                                : "bg-surface border-border"
+                            }
+                          `}
+                        >
+                          {assignedToThisBucket && (
+                            <div className="w-2 h-2 bg-white rounded-sm"></div>
+                          )}
+                        </div>
+
+                        <span
+                          className={`text-sm ${
+                            assignedToOtherBucket && !assignedToThisBucket
+                              ? "text-ink-muted/60"
+                              : "text-ink"
+                          }`}
+                        >
+                          {cat}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );

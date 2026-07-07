@@ -1,1 +1,54 @@
+/* -------------------------------------------------------- */
+/* Design tokens - "ledger" direction.                       */
+/* Deliberately not warm-cream+serif, not near-black+acid,   */
+/* not broadsheet hairline/zero-radius - see design notes.   */
+/* -------------------------------------------------------- */
+@import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap");
 @import "tailwindcss";
+
+@theme {
+  /* Surfaces */
+  --color-paper: #eff3ee;      /* app background - pale mint-white, not cream */
+  --color-surface: #ffffff;    /* cards */
+  --color-surface-sunken: #f4f6f2;
+
+  /* Ink */
+  --color-ink: #1c2321;        /* primary text */
+  --color-ink-muted: #6b7570;  /* secondary text */
+  --color-border: #dbe3db;     /* hairline borders */
+
+  /* Accents - two distinct, purposeful axes */
+  --color-ledger: #1f6f5c;        /* primary brand / category data */
+  --color-ledger-dark: #175646;
+  --color-ledger-soft: #e3efe9;
+
+  --color-travel: #b8622e;        /* reserved for travel-tagged content only */
+  --color-travel-dark: #944d22;
+  --color-travel-soft: #f5e8dd;
+
+  --color-alert: #a1423b;         /* destructive actions */
+  --color-alert-soft: #f5e4e2;
+
+  /* Type */
+  --font-display: "Fraunces", serif;
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--color-paper);
+  color: var(--color-ink);
+}
+
+/* Every currency figure in the app uses this - the one signature
+   treatment, applied consistently rather than decoratively. */
+.money {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.font-display {
+  font-family: var(--font-display);
+}

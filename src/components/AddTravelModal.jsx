@@ -1,9 +1,9 @@
 // src/components/AddTravelModal.jsx
 import { useState } from "react";
-import { X } from "lucide-react";
+import { X, Plane } from "lucide-react";
 import { useExpenseContext } from "../context/ExpenseContext";
 
-export default function AddTravelModal({ onClose }) {
+export default function AddTravelModal({ onClose, onCreated }) {
   const { addTravel } = useExpenseContext();
 
   const [title, setTitle] = useState("");
@@ -18,12 +18,13 @@ export default function AddTravelModal({ onClose }) {
       return alert("Start date cannot be after end date.");
 
     try {
-      await addTravel({
+      const newTravelId = await addTravel({
         title: title.trim(),
         startDate,
         endDate,
         comments: comments.trim(),
       });
+      onCreated?.(newTravelId);
       onClose();
     } catch (err) {
       console.error("Failed to add travel:", err);
@@ -32,65 +33,68 @@ export default function AddTravelModal({ onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center bg-black/40 z-50">
-      <div className="bg-white w-[90%] max-w-md rounded-xl shadow-lg p-6 relative">
+    <div className="fixed inset-0 flex items-center justify-center bg-ink/40 z-50">
+      <div className="bg-surface w-[90%] max-w-md rounded-xl shadow-lg p-6 relative">
         <button
           onClick={onClose}
-          className="absolute top-3 right-3 text-gray-500 hover:text-gray-700"
+          className="absolute top-3 right-3 text-ink-muted hover:text-ink"
         >
           <X size={18} />
         </button>
 
-        <h2 className="text-2xl font-semibold mb-4 text-indigo-700">
-          Add Travel
-        </h2>
+        <div className="flex items-center gap-2 mb-4">
+          <Plane size={18} className="text-travel-dark" />
+          <h2 className="font-display text-xl text-ink">
+            Add Travel
+          </h2>
+        </div>
 
         <div className="flex flex-col gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-sm font-medium text-ink-muted mb-1">
               Travel Title
             </label>
             <input
               type="text"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="w-full border rounded px-3 py-2"
+              className="w-full border border-border rounded-md px-3 py-2 text-ink bg-surface focus:ring-2 focus:ring-travel focus:outline-none"
               placeholder="Trip to Manila"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-sm font-medium text-ink-muted mb-1">
               Start Date
             </label>
             <input
               type="date"
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
-              className="w-full border rounded px-3 py-2"
+              className="w-full border border-border rounded-md px-3 py-2 text-ink bg-surface focus:ring-2 focus:ring-travel focus:outline-none"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-sm font-medium text-ink-muted mb-1">
               End Date
             </label>
             <input
               type="date"
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
-              className="w-full border rounded px-3 py-2"
+              className="w-full border border-border rounded-md px-3 py-2 text-ink bg-surface focus:ring-2 focus:ring-travel focus:outline-none"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-sm font-medium text-ink-muted mb-1">
               Comments (optional)
             </label>
             <textarea
               value={comments}
               onChange={(e) => setComments(e.target.value)}
-              className="w-full border rounded px-3 py-2 resize-none"
+              className="w-full border border-border rounded-md px-3 py-2 text-ink bg-surface resize-none focus:ring-2 focus:ring-travel focus:outline-none"
               placeholder="Notes about the travel"
             />
           </div>
@@ -98,14 +102,14 @@ export default function AddTravelModal({ onClose }) {
           <div className="flex justify-end gap-3 mt-2">
             <button
               onClick={onClose}
-              className="border border-gray-300 text-gray-600 px-4 py-2 rounded-lg hover:bg-gray-100"
+              className="border border-border text-ink-muted px-4 py-2 rounded-lg hover:bg-surface-sunken transition-colors"
             >
               Cancel
             </button>
 
             <button
               onClick={handleSave}
-              className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700"
+              className="bg-travel text-white px-4 py-2 rounded-lg hover:bg-travel-dark transition-colors"
             >
               Save
             </button>

@@ -1,23 +1,26 @@
 // src/components/ExpensePieChart.jsx
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
+import { formatCurrencyPrecise } from "../utils/formatCurrency";
 
 const ExpensePieChart = ({ data }) => {
-  // Diverse color palette
+  // Coordinated palette in the ledger/travel family, rather than a
+  // generic chart-library rainbow - keeps many-category charts legible
+  // while still feeling like one consistent brand.
   const COLORS = [
-    "#6366f1", // indigo
-    "#22c55e", // green
-    "#f97316", // orange
-    "#eab308", // yellow
-    "#ef4444", // red
-    "#0ea5e9", // sky
-    "#a855f7", // purple
-    "#f43f5e"  // pink
+    "#1f6f5c", // ledger
+    "#b8622e", // travel
+    "#3d8a76", // ledger, lighter
+    "#d4884f", // travel, lighter
+    "#164f42", // ledger, darker
+    "#8a4a1f", // travel, darker
+    "#6b8a7f", // slate-green
+    "#a1423b", // alert (used sparingly, last in rotation)
   ];
 
   const sortedData = [...data].sort((a, b) => b.amount - a.amount);
 
   return (
-    <div className="w-full h-72 md:h-96">
+    <div className="money w-full h-72 md:h-96">
       <ResponsiveContainer>
         <PieChart>
           <Pie
@@ -27,7 +30,7 @@ const ExpensePieChart = ({ data }) => {
             cx="50%"
             cy="50%"
             outerRadius={100}
-            label={({ name, value }) => `${name}: ₱${value.toFixed(2)}`}
+            label={({ name, value }) => `${name}: ${formatCurrencyPrecise(value)}`}
           >
             {sortedData.map((entry, index) => (
               <Cell
@@ -36,7 +39,10 @@ const ExpensePieChart = ({ data }) => {
               />
             ))}
           </Pie>
-          <Tooltip formatter={(value) => `₱${Number(value).toFixed(2)}`} />
+          <Tooltip
+            formatter={(value) => formatCurrencyPrecise(value)}
+            contentStyle={{ fontFamily: "var(--font-mono)", fontSize: 13 }}
+          />
         </PieChart>
       </ResponsiveContainer>
     </div>

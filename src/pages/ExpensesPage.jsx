@@ -1,19 +1,20 @@
 import { useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { Plus, Pencil } from "lucide-react";
+import { Plus, Pencil, Plane } from "lucide-react";
 import AddTransactionModal from "../components/AddTransactionModal";
 import EditTransactionModal from "../components/EditTransactionModal";
 import { useExpenseContext } from "../context/ExpenseContext";
+import { useFilter } from "../context/FilterContext";
+import { findTravelById, sumAmounts } from "../utils/travelHelpers";
+import { formatCurrency } from "../utils/formatCurrency";
+import { formatDate } from "../utils/dateHelpers";
+import { formatBreakdownDisplay } from "../utils/amountHelpers";
+import FilterBar from "../components/FilterBar";
 
 export default function ExpensesPage() {
   const { year, month } = useParams();
-  const {
-    years,
-    travels, // NEW: used to resolve travel titles
-    addTransaction,
-    updateTransaction,
-    removeTransaction,
-  } = useExpenseContext();
+  const { years, travels } = useExpenseContext();
+  const { matches, hasActiveFilters } = useFilter();
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [editDay, setEditDay] = useState(null);
@@ -22,152 +23,127 @@ export default function ExpensesPage() {
   const yearObj = years.find((y) => y.year === yearInt);
   const monthObj = yearObj?.months?.find((m) => m.name === month);
 
-  // Group transactions by day, sorted most recent first
+  // Group transactions by day, sorted most recent first. Each day also
+  // carries its filtered view (visibleTransactions) - the raw
+  // `transactions` is kept too since the Edit modal must always operate on
+  // everything in that day, not just what the active filter shows.
   const grouped =
     monthObj?.days
       .slice()
       .sort((a, b) => b.day - a.day)
-      .map((d) => ({
-        day: d.day,
-        dayId: d.id,
-        transactions: d.transactions || [],
-      })) || [];
+      .map((d) => {
+        const transactions = d.transactions || [];
+        const visibleTransactions = hasActiveFilters ? transactions.filter(matches) : transactions;
+        return {
+          day: d.day,
+          dayId: d.id,
+          transactions,
+          visibleTransactions,
+        };
+      }) || [];
 
-  // ----------------------
-  // Add transactions
-  // ----------------------
-  const handleAddTransactions = async (dayNumber, transactions) => {
-    const dayObj = monthObj?.days?.find((d) => d.day === dayNumber);
-    if (!dayObj) return;
+  // Days that have nothing left once the active filter is applied are
+  // skipped entirely rather than rendered as an empty card.
+  const visibleGroups = grouped.filter((g) => g.visibleTransactions.length > 0);
+  const filteredEverythingOut = hasActiveFilters && grouped.length > 0 && visibleGroups.length === 0;
 
-    for (const t of transactions) {
-      await addTransaction(dayObj.id, t);
-    }
-
-    setShowAddModal(false);
-  };
-
-  // ----------------------
-  // Edit transactions
-  // ----------------------
-  const handleEditTransactions = async (updatedTransactions) => {
-    if (!editDay) return;
-    const dayObj = monthObj?.days?.find((d) => d.day === editDay);
-    if (!dayObj) return;
-
-    for (const t of dayObj.transactions) {
-      await removeTransaction(t.id);
-    }
-
-    for (const t of updatedTransactions) {
-      await addTransaction(dayObj.id, t);
-    }
-
-    setEditDay(null);
-  };
-
-  // Helper: resolve travel title
-  const getTravelTitle = (travelId) => {
-    if (!travelId) return "";
-    let travelIdInt = parseInt(travelId, 10);
-    const travel = travels?.find((t) => t.id === travelIdInt);
-    return travel?.title || "";
-  };
-
-  // ----------------------
-  // Helper: Render Table
-  // ----------------------
   // ----------------------
   // Render Table
   // ----------------------
-  const renderTable = (transactions) => (
-    <table className="w-full text-left border-collapse mb-4">
-      <thead>
-        <tr className="bg-gray-100">
-          <th className="border px-3 py-2 w-[18%]">Category</th>
-          <th className="border px-3 py-2 w-[35%]">Breakdown</th>
-          <th className="border px-3 py-2 w-[110px] text-right">Total</th>
-          <th className="border px-3 py-2 w-[15%]">Travel</th>
-          <th className="border px-3 py-2 w-[27%]">Comments</th>
-        </tr>
-      </thead>
-      <tbody>
-        {transactions.map((t) => {
-          const hasMultiple = t.amountBreakdown?.length > 1;
-          const breakdownDisplay = hasMultiple
-            ? t.amountBreakdown.join(" + ")
-            : t.amountBreakdown?.[0] ?? t.amount;
+  // variant colors the Total column - ledger green for everyday spend,
+  // travel amber for trip-tagged spend - so the accent itself signals
+  // which kind of expense a row is, not just the label text.
+  const renderTable = (transactions, variant = "normal") => {
+    const totalColor = variant === "travel" ? "text-travel-dark" : "text-ledger-dark";
 
-          const travelTitle = getTravelTitle(t.travelId);
+    return (
+      <table className="w-full text-left border-collapse mb-4 text-sm">
+        <thead>
+          <tr className="bg-surface-sunken text-ink-muted text-xs uppercase tracking-wide">
+            <th className="border border-border px-3 py-2 w-[18%] font-medium">Category</th>
+            <th className="border border-border px-3 py-2 w-[35%] font-medium">Breakdown</th>
+            <th className="border border-border px-3 py-2 w-[110px] text-right font-medium">Total</th>
+            <th className="border border-border px-3 py-2 w-[15%] font-medium">Travel</th>
+            <th className="border border-border px-3 py-2 w-[27%] font-medium">Comments</th>
+          </tr>
+        </thead>
+        <tbody>
+          {transactions.map((t) => {
+            const travelTitle = findTravelById(travels, t.travelId)?.title || "";
 
-          return (
-            <tr key={t.id}>
-              <td className="border px-3 py-2">
-                {t.category}
-              </td>
+            return (
+              <tr key={t.id}>
+                <td className="border border-border px-3 py-2 text-ink">
+                  {t.category}
+                </td>
 
-              <td className="border px-3 py-2 font-mono text-gray-600 text-sm">
-                {breakdownDisplay}
-              </td>
+                <td className="money border border-border px-3 py-2 text-ink-muted text-xs">
+                  {formatBreakdownDisplay(t)}
+                </td>
 
-              <td className="border px-3 py-2 font-mono text-right font-semibold text-indigo-600">
-                ₱{Number(t.amount || 0).toLocaleString()}
-              </td>
+                <td className={`money border border-border px-3 py-2 text-right font-semibold ${totalColor}`}>
+                  {formatCurrency(t.amount)}
+                </td>
 
-              <td className="border px-3 py-2 text-indigo-600 font-medium">
-                {travelTitle && `✈ ${travelTitle}`}
-              </td>
+                <td className="border border-border px-3 py-2 text-travel-dark font-medium text-xs">
+                  {travelTitle && `✈ ${travelTitle}`}
+                </td>
 
-              <td className="border px-3 py-2 text-gray-500">
-                {t.comments}
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
-  );
+                <td className="border border-border px-3 py-2 text-ink-muted">
+                  {t.comments}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    );
+  };
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
+    <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
       <div className="flex justify-between items-center mb-6 gap-2">
-        <Link
-          to={`/expenses/${year}`}
-          className="text-sm text-gray-500 hover:text-gray-700"
-        >
-          ← Back
-        </Link>
-
-        <h1 className="text-xl font-bold text-gray-800">
-          {month} {year}
-        </h1>
+        <div>
+          <Link
+            to={`/expenses/${year}`}
+            className="text-sm text-ink-muted hover:text-ink transition-colors"
+          >
+            ← {year}
+          </Link>
+          <h1 className="font-display text-2xl text-ink mt-1">
+            {month} {year}
+          </h1>
+        </div>
 
         <button
           onClick={() => setShowAddModal(true)}
-          className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl transition"
+          className="flex items-center gap-2 bg-ledger hover:bg-ledger-dark text-white px-4 py-2 rounded-lg transition-colors"
         >
           <Plus size={16} />
           Add Transaction
         </button>
       </div>
 
+      <FilterBar />
+
       {grouped.length === 0 && (
-        <p className="text-gray-500">
+        <p className="text-ink-muted">
           No transactions yet for this month.
         </p>
       )}
 
-      {grouped.map(({ day, dayId, transactions }) => {
-        const dayTotal = transactions.reduce(
-          (sum, t) => sum + Number(t.amount || 0),
-          0
-        );
+      {filteredEverythingOut && (
+        <p className="text-ink-muted">
+          No transactions match the active filter for this month.
+        </p>
+      )}
 
-        const normalTransactions = transactions.filter(
-          (t) => !t.travelId
-        );
+      {visibleGroups.map(({ day, dayId, visibleTransactions }) => {
+        const dayTotal = sumAmounts(visibleTransactions);
 
-        const travelGroups = transactions
+        const normalTransactions = visibleTransactions.filter((t) => !t.travelId);
+
+        const travelGroups = visibleTransactions
           .filter((t) => t.travelId)
           .reduce((acc, t) => {
             acc[t.travelId] = acc[t.travelId] || [];
@@ -178,24 +154,24 @@ export default function ExpensesPage() {
         return (
           <div
             key={dayId}
-            className="group mb-8 bg-white p-5 rounded-2xl shadow-sm border border-gray-100 relative"
+            className="group mb-6 bg-surface p-5 rounded-lg border border-border relative"
           >
             {/* Edit Button */}
             <button
               onClick={() => setEditDay(day)}
-              className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 bg-yellow-400 hover:bg-yellow-500 text-white rounded-lg p-1.5 transition shadow-sm"
+              className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 text-ink-muted hover:text-ledger-dark hover:bg-surface-sunken rounded-md p-1.5 transition-all"
               title="Edit Day"
             >
               <Pencil size={16} />
             </button>
 
-            <div className="flex justify-between mb-5 items-center pr-10">
-              <h2 className="text-lg font-semibold text-gray-700">
+            <div className="flex justify-between mb-4 items-center pr-10">
+              <h2 className="text-base font-semibold text-ink">
                 Day {day}
               </h2>
 
-              <span className="text-indigo-600 font-bold text-lg">
-                ₱{dayTotal.toLocaleString()}
+              <span className="money text-ledger-dark font-bold text-lg">
+                {formatCurrency(dayTotal)}
               </span>
             </div>
 
@@ -203,21 +179,15 @@ export default function ExpensesPage() {
             {/* NORMAL TRANSACTIONS */}
             {/* ------------------------ */}
             {normalTransactions.length > 0 && (
-              <div className="mb-6">
-                <div className="mb-2 text-sm font-semibold text-gray-500 uppercase tracking-wide">
+              <div className="mb-5">
+                <div className="mb-2 text-xs font-semibold text-ink-muted uppercase tracking-wide">
                   Daily Expenses
                 </div>
 
-                {renderTable(normalTransactions)}
+                {renderTable(normalTransactions, "normal")}
 
-                <div className="text-right text-sm font-semibold text-gray-600">
-                  Subtotal: ₱
-                  {normalTransactions
-                    .reduce(
-                      (sum, t) => sum + Number(t.amount || 0),
-                      0
-                    )
-                    .toLocaleString()}
+                <div className="money text-right text-sm font-semibold text-ink-muted">
+                  Subtotal: {formatCurrency(sumAmounts(normalTransactions))}
                 </div>
               </div>
             )}
@@ -227,39 +197,36 @@ export default function ExpensesPage() {
             {/* ------------------------ */}
             {Object.entries(travelGroups).map(
               ([travelId, travelTransactions]) => {
-                const travel = travels?.find(
-                  (tr) => tr.id === travelId
-                );
-
-                const travelSubtotal = travelTransactions.reduce(
-                  (sum, t) => sum + Number(t.amount || 0),
-                  0
-                );
+                const travel = findTravelById(travels, travelId);
+                const travelSubtotal = sumAmounts(travelTransactions);
 
                 return (
                   <div
                     key={travelId}
-                    className="mb-6 bg-indigo-50 border border-indigo-100 rounded-xl p-4"
+                    className="mb-5 bg-travel-soft border border-travel/30 rounded-lg p-4"
                   >
                     <div className="flex justify-between mb-3 items-center">
-                      <div>
-                        <div className="font-semibold text-indigo-700">
-                          ✈ {travel?.title || "Travel"}
-                        </div>
-
-                        {travel?.startDate && travel?.endDate && (
-                          <div className="text-xs text-indigo-500">
-                            {travel.startDate} — {travel.endDate}
+                      <div className="flex items-center gap-1.5">
+                        <Plane size={14} className="text-travel-dark" />
+                        <div>
+                          <div className="font-semibold text-travel-dark">
+                            {travel?.title || "Travel"}
                           </div>
-                        )}
+
+                          {travel?.startDate && travel?.endDate && (
+                            <div className="text-xs text-travel-dark/70">
+                              {formatDate(travel.startDate)} — {formatDate(travel.endDate)}
+                            </div>
+                          )}
+                        </div>
                       </div>
 
-                      <div className="text-indigo-700 font-semibold">
-                        ₱{travelSubtotal.toLocaleString()}
+                      <div className="money text-travel-dark font-semibold">
+                        {formatCurrency(travelSubtotal)}
                       </div>
                     </div>
 
-                    {renderTable(travelTransactions)}
+                    {renderTable(travelTransactions, "travel")}
                   </div>
                 );
               }
@@ -273,9 +240,7 @@ export default function ExpensesPage() {
         <AddTransactionModal
           year={yearInt}
           month={month}
-          travels={travels}
           existingDays={grouped.map((g) => g.day)}
-          onSave={handleAddTransactions}
           onClose={() => setShowAddModal(false)}
         />
       )}
@@ -287,13 +252,11 @@ export default function ExpensesPage() {
           month={month}
           day={editDay}
           dayId={monthObj.days.find((d) => d.day === editDay)?.id}
-          travels={travels}
           transactions={
             monthObj.days.find((d) => d.day === editDay)
               ?.transactions || []
           }
           onClose={() => setEditDay(null)}
-          onSave={handleEditTransactions}
         />
       )}
     </div>

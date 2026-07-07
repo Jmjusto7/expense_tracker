@@ -1,9 +1,21 @@
 import { useState, useRef, useEffect } from "react";
 import { X } from "lucide-react";
 import { useExpenseContext } from "../context/ExpenseContext";
-import AddTravelModal from "./AddTravelModal";
+import { parseAmountExpression } from "../utils/amountHelpers";
+import { useInlineAddTravel } from "../hooks/useInlineAddTravel";
+import CategoryAutocompleteInput from "./transaction-row/CategoryAutocompleteInput";
+import TravelSelectCell from "./transaction-row/TravelSelectCell";
 
 const generateRowId = () => Date.now() + Math.floor(Math.random() * 1000);
+
+const blankRow = () => ({
+  id: generateRowId(),
+  category: "",
+  amount: "",
+  comments: "",
+  travelId: "",
+  isNew: true,
+});
 
 export default function EditTransactionModal({ year, month, day, dayId, transactions = [], onClose }) {
   const {
@@ -17,21 +29,8 @@ export default function EditTransactionModal({ year, month, day, dayId, transact
     categories,
   } = useExpenseContext();
 
-  const getSuggestion = (input) => {
-  if (!input?.trim()) return null;
-
-  return categories.find(
-    (cat) =>
-      cat.toLowerCase().startsWith(input.toLowerCase()) &&
-      cat.toLowerCase() !== input.toLowerCase()
-  );
-};
-
-
   const [rows, setRows] = useState([]);
   const [deletedRows, setDeletedRows] = useState([]);
-  const [showAddTravelModal, setShowAddTravelModal] = useState(false);
-  const [activeRowForNewTravel, setActiveRowForNewTravel] = useState(null); // track which row triggered add travel
   const inputRefs = useRef({});
 
   // Initialize rows from transactions
@@ -46,7 +45,7 @@ export default function EditTransactionModal({ year, month, day, dayId, transact
             travelId: t.travelId || "",
             isNew: !t.id,
           }))
-        : [{ id: generateRowId(), category: "", amount: "", comments: "", travelId: "", isNew: true }]
+        : [blankRow()]
     );
   }, [transactions]);
 
@@ -54,8 +53,12 @@ export default function EditTransactionModal({ year, month, day, dayId, transact
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, [field]: value } : r)));
   };
 
+  const { requestAddTravel, inlineAddTravelModal } = useInlineAddTravel(
+    (rowId, newTravelId) => updateRow(rowId, "travelId", newTravelId)
+  );
+
   const addRow = () => {
-    const newRow = { id: generateRowId(), category: "", amount: "", comments: "", travelId: "", isNew: true };
+    const newRow = blankRow();
     setRows((prev) => [...prev, newRow]);
     setTimeout(() => inputRefs.current[`category-${newRow.id}`]?.focus(), 50);
   };
@@ -65,18 +68,6 @@ export default function EditTransactionModal({ year, month, day, dayId, transact
     if (!row) return;
     if (!row.isNew) setDeletedRows((prev) => [...prev, id]);
     setRows(rows.filter((r) => r.id !== id));
-  };
-
-  const parseAmount = (expr) => {
-    if (!expr) return { total: NaN, breakdown: [] };
-    const cleaned = expr.replace(/\s+/g, "");
-    if (!/^[-\d.,]+$/.test(cleaned)) return { total: NaN, breakdown: [] };
-    const breakdown = cleaned
-      .split(",")
-      .filter(Boolean)
-      .map(Number)
-      .filter((v) => !isNaN(v));
-    return { total: breakdown.reduce((a, b) => a + b, 0), breakdown };
   };
 
   const handleSave = async () => {
@@ -95,7 +86,7 @@ export default function EditTransactionModal({ year, month, day, dayId, transact
       for (const r of rows) {
         if (!r.category.trim() || !r.amount.trim()) continue;
 
-        const { total, breakdown } = parseAmount(r.amount);
+        const { total, breakdown } = parseAmountExpression(r.amount);
         if (isNaN(total)) {
           alert(`Invalid amount in category "${r.category}". Use numbers separated by commas.`);
           return;
@@ -129,25 +120,25 @@ export default function EditTransactionModal({ year, month, day, dayId, transact
 
   return (
     <>
-      <div className="fixed inset-0 flex items-center justify-center bg-black/40 z-50">
-        <div className="bg-white w-[75%] max-w-6xl rounded-xl shadow-lg p-6 relative">
-          <button onClick={onClose} className="absolute top-3 right-3 text-gray-500 hover:text-gray-700">
+      <div className="fixed inset-0 flex items-center justify-center bg-ink/40 z-50">
+        <div className="bg-surface w-[75%] max-w-6xl rounded-xl shadow-lg p-6 relative">
+          <button onClick={onClose} className="absolute top-3 right-3 text-ink-muted hover:text-ink">
             <X size={18} />
           </button>
 
-          <h2 className="text-2xl font-semibold mb-6 text-indigo-700">
+          <h2 className="font-display text-xl text-ink mb-6">
             Edit Transactions — {month} {day}, {year}
           </h2>
 
           <div className="overflow-x-auto mb-4">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="bg-gray-100">
-                  <th className="border px-3 py-2 w-[20%]">Category</th>
-                  <th className="border px-3 py-2 w-[20%]">Amount (comma-separated)</th>
-                  <th className="border px-3 py-2 w-[20%]">Travel</th>
-                  <th className="border px-3 py-2 w-[35%]">Comments</th>
-                  <th className="border px-3 py-2 w-[5%]">Remove</th>
+                <tr className="bg-surface-sunken text-ink-muted text-xs uppercase tracking-wide">
+                  <th className="border border-border px-3 py-2 w-[20%] font-medium">Category</th>
+                  <th className="border border-border px-3 py-2 w-[20%] font-medium">Amount (comma-separated)</th>
+                  <th className="border border-border px-3 py-2 w-[20%] font-medium">Travel</th>
+                  <th className="border border-border px-3 py-2 w-[35%] font-medium">Comments</th>
+                  <th className="border border-border px-3 py-2 w-[5%] font-medium">Remove</th>
                 </tr>
               </thead>
 
@@ -155,88 +146,44 @@ export default function EditTransactionModal({ year, month, day, dayId, transact
                 {rows.map((r, i) => (
                   <tr key={r.id}>
                     {/* CATEGORY */}
-                    <td className="border px-3 py-2">
-                      <div className="relative w-full">
-                        <input
-                          type="text"
-                          value={r.category}
-                          onChange={(e) => updateRow(r.id, "category", e.target.value)}
-                          onKeyDown={(e) => {
-                            const suggestion = getSuggestion(r.category);
-
-                            if (e.key === "Tab" && suggestion) {
-                              e.preventDefault();
-                              updateRow(r.id, "category", suggestion);
-                            }
-                          }}
-                          className="w-full border rounded px-2 py-1 bg-transparent relative"
-                          placeholder="Category"
-                          ref={(el) => (inputRefs.current[`category-${r.id}`] = el)}
-                        />
-
-                        {/* 👻 Ghost text */}
-                        {(() => {
-                          const suggestion = getSuggestion(r.category);
-                          const ghostText = suggestion
-                            ? suggestion.slice(r.category.length)
-                            : "";
-
-                          return (
-                            r.category &&
-                            ghostText && (
-                              <div className="absolute inset-0 px-2 py-1 pointer-events-none text-gray-400">
-                                <span className="invisible">{r.category}</span>
-                                {ghostText}
-                              </div>
-                            )
-                          );
-                        })()}
-                      </div>
+                    <td className="border border-border px-3 py-2">
+                      <CategoryAutocompleteInput
+                        value={r.category}
+                        onChange={(val) => updateRow(r.id, "category", val)}
+                        categories={categories}
+                        inputRef={(el) => (inputRefs.current[`category-${r.id}`] = el)}
+                      />
                     </td>
 
                     {/* AMOUNT */}
-                    <td className="border px-3 py-2">
+                    <td className="border border-border px-3 py-2">
                       <input
                         type="text"
                         value={r.amount}
                         onChange={(e) => updateRow(r.id, "amount", e.target.value)}
-                        className="w-full border rounded px-2 py-1 font-mono"
+                        className="money w-full border border-border rounded-md px-2 py-1.5 text-sm bg-transparent text-ink focus:ring-2 focus:ring-ledger focus:outline-none"
                         placeholder="e.g. 195.5, -130, 25.25"
                         ref={(el) => (inputRefs.current[`amount-${r.id}`] = el)}
                       />
                     </td>
 
                     {/* TRAVEL SELECT */}
-                    <td className="border px-3 py-2">
-                      <select
+                    <td className="border border-border px-3 py-2">
+                      <TravelSelectCell
                         value={r.travelId}
-                        onChange={(e) => {
-                          if (e.target.value === "__add__") {
-                            setActiveRowForNewTravel(r.id);
-                            setShowAddTravelModal(true);
-                            return;
-                          }
-                          updateRow(r.id, "travelId", e.target.value);
-                        }}
-                        className="w-full border rounded px-2 py-1 bg-white"
-                      >
-                        <option value="">— No Travel —</option>
-                        {travels?.map((travel) => (
-                          <option key={travel.id} value={travel.id}>
-                            {travel.title}
-                          </option>
-                        ))}
-                        <option value="__add__">+ Add Travel</option>
-                      </select>
+                        onChange={(val) => updateRow(r.id, "travelId", val)}
+                        onRequestAdd={() => requestAddTravel(r.id)}
+                        travels={travels}
+                      />
                     </td>
 
                     {/* COMMENTS */}
-                    <td className="border px-3 py-2">
+                    <td className="border border-border px-3 py-2">
                       <input
                         type="text"
                         value={r.comments}
                         onChange={(e) => updateRow(r.id, "comments", e.target.value)}
-                        className="w-full border rounded px-2 py-1"
+                        className="w-full border border-border rounded-md px-2 py-1.5 text-sm bg-transparent text-ink focus:ring-2 focus:ring-ledger focus:outline-none"
                         placeholder="Comments"
                         ref={(el) => (inputRefs.current[`comments-${r.id}`] = el)}
                         onKeyDown={(e) => {
@@ -249,8 +196,8 @@ export default function EditTransactionModal({ year, month, day, dayId, transact
                     </td>
 
                     {/* REMOVE */}
-                    <td className="border px-3 py-2 text-center">
-                      <button onClick={() => removeRow(r.id)} className="text-red-600 hover:underline">
+                    <td className="border border-border px-3 py-2 text-center">
+                      <button onClick={() => removeRow(r.id)} className="text-alert hover:underline">
                         ×
                       </button>
                     </td>
@@ -260,27 +207,22 @@ export default function EditTransactionModal({ year, month, day, dayId, transact
             </table>
           </div>
 
-          <button onClick={addRow} className="text-sm text-indigo-600 hover:underline mb-3">
+          <button onClick={addRow} className="text-sm text-ledger-dark hover:underline mb-3">
             + Add Row
           </button>
 
           <div className="flex justify-end gap-3">
-            <button onClick={onClose} className="border border-gray-300 text-gray-600 px-4 py-2 rounded-lg hover:bg-gray-100">
+            <button onClick={onClose} className="border border-border text-ink-muted px-4 py-2 rounded-lg hover:bg-surface-sunken transition-colors">
               Discard
             </button>
-            <button onClick={handleSave} className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700">
+            <button onClick={handleSave} className="bg-ledger text-white px-4 py-2 rounded-lg hover:bg-ledger-dark transition-colors">
               Save
             </button>
           </div>
         </div>
       </div>
 
-      {/* ADD TRAVEL MODAL */}
-      {showAddTravelModal && (
-        <AddTravelModal
-          onClose={() => setShowAddTravelModal(false)}
-        />
-      )}
+      {inlineAddTravelModal}
     </>
   );
 }

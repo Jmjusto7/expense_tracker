@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { Routes, Route } from "react-router-dom";
 import SummaryPage from "./pages/SummaryPage";
 import YearExpensesPage from "./pages/YearExpensesPage";
 import MonthExpensesPage from "./pages/MonthExpensesPage";
@@ -8,52 +8,50 @@ import ExpensesPage from "./pages/ExpensesPage";
 import SettingsPage from "./pages/SettingsPage";
 import HierarchyGuard from "./components/HierarchyGuard";
 
-export default function AppRoutes() {1 
+export default function AppRoutes() {
   return (
-    <BrowserRouter>
-      <Routes>
-        {/* Summary chart page */}
-        <Route path="/" element={<SummaryPage />} />
+    <Routes>
+      {/* Summary chart page */}
+      <Route path="/" element={<SummaryPage />} />
 
-        {/* Settings page */}
-        <Route path="/settings" element={<SettingsPage />} />
+      {/* Settings page */}
+      <Route path="/settings" element={<SettingsPage />} />
 
-        {/* Year list page */}
-        <Route path="/expenses" element={<YearExpensesPage />} />
+      {/* Year list page */}
+      <Route path="/expenses" element={<YearExpensesPage />} />
 
-        {/* Month list for a specific year */}
-        <Route
-          path="/expenses/:year"
-          element={
-            <HierarchyGuard>
-              <MonthExpensesPage />
-            </HierarchyGuard>
-          }
-        />
+      {/* Month list for a specific year */}
+      <Route
+        path="/expenses/:year"
+        element={
+          <HierarchyGuard>
+            <MonthExpensesPage />
+          </HierarchyGuard>
+        }
+      />
 
-        {/* Transactions for a specific month */}
-        <Route
-          path="/expenses/:year/:month"
-          element={
-            <HierarchyGuard>
-              <ExpensesPage />
-            </HierarchyGuard>
-          }
-        />
+      {/* Transactions for a specific month */}
+      <Route
+        path="/expenses/:year/:month"
+        element={
+          <HierarchyGuard>
+            <ExpensesPage />
+          </HierarchyGuard>
+        }
+      />
 
-        {/* Year list page */}
-        <Route path="/travels" element={<TravelsPage />} />
+      {/* Year list page */}
+      <Route path="/travels" element={<TravelsPage />} />
 
-        /* Travel detail */
-        <Route
-          path="/travels/:travelId"
-          element={
-            // <HierarchyGuard>
-              <TravelDetailPage />
-            // </HierarchyGuard>
-          }
-        />
-      </Routes>
-    </BrowserRouter>
+      {/* Travel detail */}
+      <Route
+        path="/travels/:travelId"
+        element={
+          <HierarchyGuard>
+            <TravelDetailPage />
+          </HierarchyGuard>
+        }
+      />
+    </Routes>
   );
 }
