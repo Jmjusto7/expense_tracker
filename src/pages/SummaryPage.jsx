@@ -11,9 +11,15 @@ import "react-date-picker/dist/DatePicker.css";
 import "react-calendar/dist/Calendar.css";
 import { formatMonthYear } from "../utils/dateHelpers";
 import { formatCurrency, formatCurrencyPrecise } from "../utils/formatCurrency";
-import { ArrowUpRight, ArrowDownRight, Minus, Plane } from "lucide-react";
+import { ArrowUpRight, ArrowDownRight, Minus, Plane, ChevronRight } from "lucide-react";
 import { TRAVEL_FILTER_ID } from "../utils/travelHelpers";
 import { transactionMatchesBucketAndCategory } from "../utils/transactionFilter";
+import {
+  classifyTransactions,
+  groupByEffectiveBucket,
+  groupByCategory,
+  getAvailableCategories,
+} from "../utils/transactionClassification";
 
 const SummaryPage = () => {
   const navigate = useNavigate();
@@ -41,6 +47,18 @@ const SummaryPage = () => {
   const [useBuckets, setUseBuckets] = useState(true);
 
   // -------------------------
+  // Travel 3-level drill-down state:
+  // Level 1: Top buckets (Travel is one bucket)
+  // Level 2: Buckets within Travel (when travelDrillBucketId === null but Travel is selected)
+  // Level 3: Categories within a bucket inside Travel (when travelDrillBucketId is set)
+  // -------------------------
+  const [travelDrillBucketId, setTravelDrillBucketId] = useState(null);
+
+  // Are we currently drilling inside Travel?
+  const isInsideTravelDrill = selectedBucketIds.length === 1 && selectedBucketIds[0] === TRAVEL_FILTER_ID;
+  const travelDrillBucket = buckets.find((b) => b.id === travelDrillBucketId) || null;
+
+  // -------------------------
   // Time filtering (date-only stage, needed in isolation to compute
   // travel-linked categories before bucket/category narrowing)
   // -------------------------
@@ -48,106 +66,145 @@ const SummaryPage = () => {
     return allTransactions.filter(matchesDate);
   }, [allTransactions, matchesDate]);
 
-  // Categories that appear on any travel-tagged transaction, regardless of
-  // which real bucket they belong to. Powers the sub-filter row shown when
-  // the "Travel" pill is selected.
+  // Classify all time-filtered transactions with their effective bucket
+  const classifiedTx = useMemo(() => {
+    return classifyTransactions(timeFilteredTx, buckets);
+  }, [timeFilteredTx, buckets]);
+
+  // For Travel drill-down: travel-tagged transactions reclassified by their
+  // category's bucket (ignoreTravelOverride). Used for Level 2 & 3.
+  const travelScopedClassifiedTx = useMemo(() => {
+    const travelOnly = timeFilteredTx.filter((t) => t.travelId != null);
+    return classifyTransactions(travelOnly, buckets, { ignoreTravelOverride: true });
+  }, [timeFilteredTx, buckets]);
+
+  // Categories that appear on any travel-tagged transaction. Powers the
+  // sub-filter row shown when the "Travel" pill is selected.
   const travelLinkedCategories = useMemo(() => {
-    return [...new Set(
-      timeFilteredTx.filter((t) => t.travelId != null).map((t) => t.category)
-    )].filter(Boolean);
-  }, [timeFilteredTx]);
+    return getAvailableCategories(classifiedTx, [TRAVEL_FILTER_ID]);
+  }, [classifiedTx]);
 
   // -------------------------
-  // Bucket + category filtering
+  // Bucket + category filtering (uses classification-aware filter)
   // -------------------------
   const filteredTransactions = useMemo(() => {
-    return timeFilteredTx.filter((t) =>
+    return classifiedTx.filter((t) =>
       transactionMatchesBucketAndCategory(t, { selectedBucketIds, selectedCategoryFilters, buckets })
     );
-  }, [timeFilteredTx, selectedBucketIds, selectedCategoryFilters, buckets]);
+  }, [classifiedTx, selectedBucketIds, selectedCategoryFilters, buckets]);
 
-  // Once a bucket filter is active, the chart should break down into that
-  // bucket's constituent categories rather than showing one lone
-  // bucket-level slice (which is just the sum again). Detail mode is
-  // always category-level.
-  const isCategoryLevel = !useBuckets || selectedBucketIds.length > 0;
+  // Determine current drill-down level:
+  // - Level 1: Top buckets (no bucket selected, or non-Travel bucket selected)
+  // - Level 2: Inside Travel, showing buckets (Travel selected, no travelDrillBucketId)
+  // - Level 3: Inside Travel → Bucket, showing categories (Travel selected + travelDrillBucketId)
+  const isLevel2TravelBuckets = isInsideTravelDrill && useBuckets && !travelDrillBucketId;
+  const isLevel3TravelCategories = isInsideTravelDrill && useBuckets && travelDrillBucketId;
+
+  // For standard bucket flow: bucket filter active means show categories
+  const isCategoryLevel = !useBuckets || (selectedBucketIds.length > 0 && !isLevel2TravelBuckets);
 
   // -------------------------
-  // Pie chart / breakdown data
+  // Pie chart / breakdown data (uses native classification)
+  // Supports 3-level Travel drill-down:
+  //   L1: Top buckets (Travel is one slice)
+  //   L2: Travel selected → buckets within travel
+  //   L3: Travel → Bucket selected → categories within that bucket
   // -------------------------
   const chartData = useMemo(() => {
+    // Level 2: Inside Travel, show buckets (using travel-scoped classification)
+    if (isLevel2TravelBuckets) {
+      if (travelScopedClassifiedTx.length === 0) return [];
+
+      const bucketGroups = groupByEffectiveBucket(travelScopedClassifiedTx);
+      const total = [...bucketGroups.values()].reduce((s, g) => s + g.total, 0);
+
+      return [...bucketGroups.values()]
+        .filter((g) => g.total > 0)
+        .map((g) => ({
+          category: g.bucketLabel,
+          amount: g.total,
+          bucketId: g.bucketId,
+          percent: total ? ((g.total / total) * 100).toFixed(1) : 0,
+        }));
+    }
+
+    // Level 3: Inside Travel → Bucket, show categories
+    if (isLevel3TravelCategories) {
+      const scopedToTravelBucket = travelScopedClassifiedTx.filter(
+        (t) => t.effectiveBucketId === travelDrillBucketId
+      );
+      // Also apply category filter if active
+      const finalScoped = selectedCategoryFilters.length > 0
+        ? scopedToTravelBucket.filter((t) => selectedCategoryFilters.includes(t.category))
+        : scopedToTravelBucket;
+
+      if (finalScoped.length === 0) return [];
+
+      const categoryGroups = groupByCategory(finalScoped);
+      const total = [...categoryGroups.values()].reduce((s, g) => s + g.total, 0);
+
+      return [...categoryGroups.values()]
+        .filter((g) => g.total > 0)
+        .map((g) => ({
+          category: g.category,
+          amount: g.total,
+          percent: total ? ((g.total / total) * 100).toFixed(1) : 0,
+        }));
+    }
+
+    // Standard flow
     if (filteredTransactions.length === 0) return [];
 
     if (useBuckets && !isCategoryLevel) {
-      // Top-level bucket view: one slice per bucket.
-      // Travel-tagged spend gets its own slice regardless of which bucket
-      // its category belongs to - pulled out of the normal grouping so
-      // slices don't double-count.
-      const travelTx = filteredTransactions.filter((t) => t.travelId != null);
-      const nonTravelTx = filteredTransactions.filter((t) => t.travelId == null);
+      // Level 1: Top-level bucket view (Travel is its own bucket)
+      const bucketGroups = groupByEffectiveBucket(filteredTransactions);
+      const total = [...bucketGroups.values()].reduce((s, g) => s + g.total, 0);
 
-      const bucketedCategories = new Set(buckets.flatMap((b) => b.categories));
-
-      const result = buckets.reduce((acc, b) => {
-        const amt = nonTravelTx
-          .filter((t) => b.categories.includes(t.category))
-          .reduce((s, t) => s + Number(t.amount ?? 0), 0);
-
-        if (amt > 0) acc.push({ category: b.name, amount: amt, bucketId: b.id });
-        return acc;
-      }, []);
-
-      // Categories not yet assigned to any bucket would otherwise
-      // disappear from bucket-mode totals entirely. Surface them
-      // under "Unassigned" instead of silently dropping the spend.
-      const unassignedAmt = nonTravelTx
-        .filter((t) => t.category && !bucketedCategories.has(t.category))
-        .reduce((s, t) => s + Number(t.amount ?? 0), 0);
-
-      if (unassignedAmt > 0) {
-        result.push({ category: "Unassigned", amount: unassignedAmt, bucketId: null });
-      }
-
-      const travelAmt = travelTx.reduce((s, t) => s + Number(t.amount ?? 0), 0);
-      if (travelAmt > 0) {
-        result.push({ category: "Travel", amount: travelAmt, bucketId: TRAVEL_FILTER_ID });
-      }
-
-      const total = result.reduce((s, x) => s + x.amount, 0);
-      return result.map((x) => ({
-        ...x,
-        percent: total ? ((x.amount / total) * 100).toFixed(1) : 0,
-      }));
+      return [...bucketGroups.values()]
+        .filter((g) => g.total > 0)
+        .map((g) => ({
+          category: g.bucketLabel,
+          amount: g.total,
+          bucketId: g.bucketId,
+          percent: total ? ((g.total / total) * 100).toFixed(1) : 0,
+        }));
     }
 
-    // Category-level view: either Detail mode, or drilled into a bucket
-    // filter. filteredTransactions is already scoped to the selected
-    // bucket(s)/Travel, so grouping by category here is the breakdown
-    // of what's inside that selection - not a fresh top-level total.
-    const map = {};
-    filteredTransactions.forEach((t) => {
-      if (!t.category) return;
-      map[t.category] = (map[t.category] || 0) + Number(t.amount ?? 0);
-    });
+    // Category-level view: Detail mode, or drilled into a non-Travel bucket
+    const categoryGroups = groupByCategory(filteredTransactions);
+    const total = [...categoryGroups.values()].reduce((s, g) => s + g.total, 0);
 
-    const total = Object.values(map).reduce((a, b) => a + b, 0);
-
-    return Object.entries(map).map(([cat, amt]) => ({
-      category: cat,
-      amount: amt,
-      percent: total ? ((amt / total) * 100).toFixed(1) : 0,
-    }));
-  }, [filteredTransactions, useBuckets, isCategoryLevel, buckets]);
+    return [...categoryGroups.values()]
+      .filter((g) => g.total > 0)
+      .map((g) => ({
+        category: g.category,
+        amount: g.total,
+        percent: total ? ((g.total / total) * 100).toFixed(1) : 0,
+      }));
+  }, [filteredTransactions, useBuckets, isCategoryLevel, isLevel2TravelBuckets, isLevel3TravelCategories, travelScopedClassifiedTx, travelDrillBucketId, selectedCategoryFilters]);
 
   const totalExpenses = chartData.reduce((s, x) => s + x.amount, 0);
   const hasData = chartData.length > 0;
 
   // -------------------------
-  // Monthly totals
+  // Monthly totals (use travel-scoped data when drilling inside Travel)
   // -------------------------
   const monthlyTotals = useMemo(() => {
+    // Determine which transactions to use for monthly chart
+    let txForMonthly = filteredTransactions;
+    if (isLevel2TravelBuckets) {
+      txForMonthly = travelScopedClassifiedTx;
+    } else if (isLevel3TravelCategories) {
+      const scopedToTravelBucket = travelScopedClassifiedTx.filter(
+        (t) => t.effectiveBucketId === travelDrillBucketId
+      );
+      txForMonthly = selectedCategoryFilters.length > 0
+        ? scopedToTravelBucket.filter((t) => selectedCategoryFilters.includes(t.category))
+        : scopedToTravelBucket;
+    }
+
     const map = {};
-    filteredTransactions.forEach((t) => {
+    txForMonthly.forEach((t) => {
       if (!t.yearNumber || !t.monthName) return;
 
       const key = `${t.monthName} ${t.yearNumber}`;
@@ -160,12 +217,24 @@ const SummaryPage = () => {
         return { date: new Date(`${month} 1, ${year}`), total };
       })
       .sort((a, b) => a.date - b.date);
-  }, [filteredTransactions]);
+  }, [filteredTransactions, isLevel2TravelBuckets, isLevel3TravelCategories, travelScopedClassifiedTx, travelDrillBucketId, selectedCategoryFilters]);
 
   // -------------------------
-  // Headline stats
+  // Headline stats (use correct data source for travel drill-down)
   // -------------------------
-  const transactionCount = filteredTransactions.length;
+  const transactionCount = useMemo(() => {
+    if (isLevel2TravelBuckets) return travelScopedClassifiedTx.length;
+    if (isLevel3TravelCategories) {
+      const scopedToTravelBucket = travelScopedClassifiedTx.filter(
+        (t) => t.effectiveBucketId === travelDrillBucketId
+      );
+      return selectedCategoryFilters.length > 0
+        ? scopedToTravelBucket.filter((t) => selectedCategoryFilters.includes(t.category)).length
+        : scopedToTravelBucket.length;
+    }
+    return filteredTransactions.length;
+  }, [filteredTransactions, isLevel2TravelBuckets, isLevel3TravelCategories, travelScopedClassifiedTx, travelDrillBucketId, selectedCategoryFilters]);
+
   const avgPerMonth = monthlyTotals.length ? totalExpenses / monthlyTotals.length : 0;
   const topItem = [...chartData].sort((a, b) => b.amount - a.amount)[0];
 
@@ -183,24 +252,53 @@ const SummaryPage = () => {
 
   // -------------------------
   // Breakdown grid data - click drills the actual filter, doesn't just decorate
+  // Handles 3-level Travel drill-down
   // -------------------------
   const breakdownItems = useMemo(() => {
+    // Determine if we're showing buckets (L1 or L2) or categories (L3 or standard category level)
+    const showingBuckets = (useBuckets && !isCategoryLevel) || isLevel2TravelBuckets;
+    const showingCategories = isLevel3TravelCategories || (isCategoryLevel && !isLevel2TravelBuckets);
+
     return [...chartData]
       .sort((a, b) => b.amount - a.amount)
       .map((item) => ({
-        key: isCategoryLevel ? item.category : item.bucketId ?? "unassigned",
+        key: showingCategories ? item.category : item.bucketId ?? "unassigned",
         label: item.category,
         amountDisplay: formatCurrencyPrecise(item.amount),
         percent: item.percent,
-        disabled: !isCategoryLevel && item.bucketId == null,
+        disabled: showingBuckets && item.bucketId == null,
         bucketId: item.bucketId,
         category: item.category,
       }));
-  }, [chartData, isCategoryLevel]);
+  }, [chartData, isCategoryLevel, useBuckets, isLevel2TravelBuckets, isLevel3TravelCategories]);
 
-  const breakdownActiveKeys = isCategoryLevel ? selectedCategoryFilters : selectedBucketIds;
+  // Active keys depend on current drill level
+  const breakdownActiveKeys = useMemo(() => {
+    if (isLevel3TravelCategories) return selectedCategoryFilters;
+    if (isLevel2TravelBuckets) return travelDrillBucketId ? [travelDrillBucketId] : [];
+    return isCategoryLevel ? selectedCategoryFilters : selectedBucketIds;
+  }, [isCategoryLevel, isLevel2TravelBuckets, isLevel3TravelCategories, selectedBucketIds, selectedCategoryFilters, travelDrillBucketId]);
 
   const handleBreakdownClick = (item) => {
+    // Level 2: Inside Travel, clicking a bucket drills to Level 3
+    if (isLevel2TravelBuckets) {
+      if (item.bucketId != null) {
+        setTravelDrillBucketId(item.bucketId);
+      }
+      return;
+    }
+
+    // Level 3: Inside Travel → Bucket, clicking a category toggles filter
+    if (isLevel3TravelCategories) {
+      setSelectedCategoryFilters((prev) =>
+        prev.includes(item.category)
+          ? prev.filter((x) => x !== item.category)
+          : [...prev, item.category]
+      );
+      return;
+    }
+
+    // Standard flow
     if (isCategoryLevel) {
       setSelectedCategoryFilters((prev) =>
         prev.includes(item.category)
@@ -214,6 +312,12 @@ const SummaryPage = () => {
           : [...prev, item.bucketId]
       );
     }
+  };
+
+  // Reset travel drill-down when leaving Travel filter
+  const handleClearTravelDrill = () => {
+    setTravelDrillBucketId(null);
+    setSelectedCategoryFilters([]);
   };
 
   // -------------------------
@@ -233,6 +337,7 @@ const SummaryPage = () => {
               onChange={() => {
                 setUseBuckets(!useBuckets);
                 setSelectedCategoryFilters([]);
+                setTravelDrillBucketId(null);
               }}
             />
             <div className="absolute left-0 top-0 w-1/2 h-full bg-ledger rounded-full transition-all peer-checked:left-1/2"></div>
@@ -276,43 +381,42 @@ const SummaryPage = () => {
           )}
         </div>
 
-        {/* Bucket filter pills */}
-        {(buckets.length > 0 || travelLinkedCategories.length > 0) && (
+        {/* Bucket filter pills (hidden when inside Travel drill-down) */}
+        {(buckets.length > 0 || travelLinkedCategories.length > 0) && !isInsideTravelDrill && (
           <div className="flex flex-wrap gap-1.5 pt-2 border-t border-border">
             {buckets.map((b) => (
               <button
                 key={b.id}
-                onClick={() =>
+                onClick={() => {
+                  setTravelDrillBucketId(null);
                   setSelectedBucketIds((prev) =>
                     prev.includes(b.id) ? prev.filter((x) => x !== b.id) : [...prev, b.id]
-                  )
-                }
-                className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
-                  selectedBucketIds.includes(b.id)
-                    ? "bg-ledger text-white border-ledger"
-                    : "border-border text-ink-muted hover:border-ledger hover:text-ledger-dark"
-                }`}
+                  );
+                }}
+                className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${selectedBucketIds.includes(b.id)
+                  ? "bg-ledger text-white border-ledger"
+                  : "border-border text-ink-muted hover:border-ledger hover:text-ledger-dark"
+                  }`}
               >
                 {b.name}
               </button>
             ))}
 
-            {/* Synthetic "Travel" pill - not a real bucket. Selecting it
-                shows spend across any travel-tagged transaction, regardless
-                of that transaction's category/bucket. */}
+            {/* Synthetic "Travel" pill - selecting it enters Travel drill-down */}
             <button
-              onClick={() =>
+              onClick={() => {
+                setTravelDrillBucketId(null);
+                setSelectedCategoryFilters([]);
                 setSelectedBucketIds((prev) =>
                   prev.includes(TRAVEL_FILTER_ID)
                     ? prev.filter((x) => x !== TRAVEL_FILTER_ID)
-                    : [...prev, TRAVEL_FILTER_ID]
-                )
-              }
-              className={`flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border transition-colors ${
-                selectedBucketIds.includes(TRAVEL_FILTER_ID)
-                  ? "bg-travel text-white border-travel"
-                  : "border-travel/40 text-travel-dark hover:border-travel"
-              }`}
+                    : [TRAVEL_FILTER_ID]
+                );
+              }}
+              className={`flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border transition-colors ${selectedBucketIds.includes(TRAVEL_FILTER_ID)
+                ? "bg-travel text-white border-travel"
+                : "border-travel/40 text-travel-dark hover:border-travel"
+                }`}
             >
               <Plane size={11} />
               Travel
@@ -320,18 +424,46 @@ const SummaryPage = () => {
           </div>
         )}
 
-        {/* Category filter pills, scoped to selected buckets (+ any
-            travel-linked categories, if the Travel pill is selected) */}
-        {selectedBucketIds.length > 0 && (
+        {/* Travel drill-down breadcrumb navigation */}
+        {isInsideTravelDrill && useBuckets && (
+          <div className="flex items-center gap-1.5 pt-2 border-t border-border text-sm">
+            <button
+              onClick={() => {
+                setTravelDrillBucketId(null);
+                setSelectedCategoryFilters([]);
+                setSelectedBucketIds([]);
+              }}
+              className="text-ink-muted hover:text-ink"
+            >
+              All Buckets
+            </button>
+            <ChevronRight size={14} className="text-ink-muted" />
+            <button
+              onClick={() => {
+                setTravelDrillBucketId(null);
+                setSelectedCategoryFilters([]);
+              }}
+              className={`flex items-center gap-1 ${travelDrillBucketId ? "text-ink-muted hover:text-ink" : "font-semibold text-travel-dark"}`}
+            >
+              <Plane size={12} />
+              Travel
+            </button>
+            {travelDrillBucket && (
+              <>
+                <ChevronRight size={14} className="text-ink-muted" />
+                <span className="font-semibold text-ink">{travelDrillBucket.name}</span>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Category filter pills for Level 3 (Travel → Bucket → Categories) */}
+        {isLevel3TravelCategories && (
           <div className="flex flex-wrap gap-1.5">
-            {[
-              ...new Set([
-                ...buckets
-                  .filter((b) => selectedBucketIds.includes(b.id))
-                  .flatMap((b) => b.categories),
-                ...(selectedBucketIds.includes(TRAVEL_FILTER_ID) ? travelLinkedCategories : []),
-              ]),
-            ].map((cat) => (
+            {getAvailableCategories(
+              travelScopedClassifiedTx.filter((t) => t.effectiveBucketId === travelDrillBucketId),
+              []
+            ).map((cat) => (
               <button
                 key={cat}
                 onClick={() =>
@@ -339,11 +471,32 @@ const SummaryPage = () => {
                     prev.includes(cat) ? prev.filter((x) => x !== cat) : [...prev, cat]
                   )
                 }
-                className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
-                  selectedCategoryFilters.includes(cat)
-                    ? "bg-ledger-soft text-ledger-dark border-ledger/40"
-                    : "border-border text-ink-muted hover:border-ledger"
-                }`}
+                className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${selectedCategoryFilters.includes(cat)
+                  ? "bg-travel-soft text-travel-dark border-travel/40"
+                  : "border-border text-ink-muted hover:border-travel"
+                  }`}
+              >
+                {cat}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Category filter pills for standard bucket selection (non-Travel) */}
+        {selectedBucketIds.length > 0 && !isInsideTravelDrill && (
+          <div className="flex flex-wrap gap-1.5">
+            {getAvailableCategories(classifiedTx, selectedBucketIds).map((cat) => (
+              <button
+                key={cat}
+                onClick={() =>
+                  setSelectedCategoryFilters((prev) =>
+                    prev.includes(cat) ? prev.filter((x) => x !== cat) : [...prev, cat]
+                  )
+                }
+                className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${selectedCategoryFilters.includes(cat)
+                  ? "bg-ledger-soft text-ledger-dark border-ledger/40"
+                  : "border-border text-ink-muted hover:border-ledger"
+                  }`}
               >
                 {cat}
               </button>
@@ -369,13 +522,12 @@ const SummaryPage = () => {
                   vs Previous Month
                 </div>
                 <div
-                  className={`flex items-center gap-1 text-2xl font-bold ${
-                    momDelta.pct > 0
-                      ? "text-alert"
-                      : momDelta.pct < 0
+                  className={`flex items-center gap-1 text-2xl font-bold ${momDelta.pct > 0
+                    ? "text-alert"
+                    : momDelta.pct < 0
                       ? "text-ledger-dark"
                       : "text-ink-muted"
-                  }`}
+                    }`}
                 >
                   {momDelta.pct > 0 ? (
                     <ArrowUpRight size={20} />
@@ -390,7 +542,11 @@ const SummaryPage = () => {
               </div>
             ) : (
               <StatCard
-                label={isCategoryLevel ? "Top Category" : "Top Bucket"}
+                label={
+                  isLevel2TravelBuckets ? "Top Bucket (Travel)" :
+                    isLevel3TravelCategories ? "Top Category (Travel)" :
+                      isCategoryLevel ? "Top Category" : "Top Bucket"
+                }
                 value={topItem ? `${topItem.percent}%` : "—"}
                 sublabel={topItem?.category}
               />
@@ -406,15 +562,19 @@ const SummaryPage = () => {
             <div className="flex-[0.8] flex flex-col gap-4">
               <div>
                 <div className="text-xs text-ink-muted uppercase tracking-wide mb-2">
-                  {isCategoryLevel
-                    ? "Click a category to narrow further"
-                    : "Click a bucket to see its categories"}
+                  {isLevel2TravelBuckets
+                    ? "Click a bucket to see its categories within Travel"
+                    : isLevel3TravelCategories
+                      ? "Click a category to filter"
+                      : isCategoryLevel
+                        ? "Click a category to narrow further"
+                        : "Click a bucket to see its categories"}
                 </div>
                 <BreakdownGrid
                   items={breakdownItems}
                   activeKeys={breakdownActiveKeys}
                   onItemClick={handleBreakdownClick}
-                  accent="ledger"
+                  accent={isInsideTravelDrill ? "travel" : "ledger"}
                 />
               </div>
 
