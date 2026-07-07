@@ -2,6 +2,14 @@
 import { createContext, useContext, useEffect, useState, useMemo } from "react";
 import { db } from "./db";
 import { normalizeTravelId } from "../utils/travelHelpers";
+import { validateImportShape } from "../utils/importValidation";
+import {
+  findDuplicateGroups,
+  buildDayLookup,
+  transactionFingerprint,
+  bucketFingerprint,
+  bucketAssignmentFingerprint,
+} from "../utils/importDedup";
 
 const ExpenseContext = createContext();
 
@@ -299,17 +307,18 @@ export function ExpenseProvider({ children }) {
   // -------------------------
   const parseImportFile = withErrorHandling("parseImportFile", async (file) => {
     const text = await file.text();
-    const parsed = JSON.parse(text);
 
-    const {
-      years = [],
-      months = [],
-      days = [],
-      transactions = [],
-      travels = [],
-      buckets = [],
-      bucketAssignments = [],
-    } = parsed;
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      throw new Error("That file isn't valid JSON.");
+    }
+
+    // Throws a descriptive error if the shape doesn't match what this app
+    // can map - caught by the caller before anything is shown or written.
+    const { years, months, days, transactions, travels, buckets, bucketAssignments } =
+      validateImportShape(parsed);
 
     const data = { years, months, days, transactions, travels, buckets, bucketAssignments };
     const counts = {
@@ -324,6 +333,71 @@ export function ExpenseProvider({ children }) {
     return { data, counts };
   });
 
+  // -------------------------
+  // Import safeguard: after a commit, scan the *full* resulting tables
+  // (existing + just-imported data together, since duplicates can span
+  // both) for records that represent the same real-world thing under
+  // different ids - e.g. merging exports from two devices whose
+  // autoincrement counters diverged. Resolves deterministically by
+  // keeping the highest-id record in each duplicate group.
+  // -------------------------
+  const cleanupDuplicatesAfterImport = async () => {
+    const [allYears, allMonths, allDays, allTx, allBuckets, allAssignments] = await Promise.all([
+      db.years.toArray(),
+      db.months.toArray(),
+      db.days.toArray(),
+      db.transactions.toArray(),
+      db.buckets.toArray(),
+      db.bucketAssignments.toArray(),
+    ]);
+
+    // 1) Buckets duplicated by name - keep highest id, remap any
+    // assignments pointing at the removed (lower-id, "older") duplicates
+    // over to the retained bucket.
+    const bucketDupes = findDuplicateGroups(allBuckets, bucketFingerprint);
+    const bucketIdRemap = {};
+    const removedBucketIds = [];
+    for (const { keep, remove } of bucketDupes) {
+      for (const b of remove) {
+        bucketIdRemap[b.id] = keep.id;
+        removedBucketIds.push(b.id);
+      }
+    }
+
+    if (removedBucketIds.length > 0) {
+      const toRemap = allAssignments.filter((a) => removedBucketIds.includes(a.bucketId));
+      for (const a of toRemap) {
+        await db.bucketAssignments.update(a.id, { bucketId: bucketIdRemap[a.bucketId] });
+      }
+      await db.buckets.bulkDelete(removedBucketIds);
+    }
+
+    // 2) Bucket assignments duplicated by (bucket, category) - remapping
+    // above can itself create fresh duplicates (two old buckets both had
+    // "Food" assigned, both now point at the same retained bucket).
+    const assignmentsAfterRemap = await db.bucketAssignments.toArray();
+    const assignmentDupes = findDuplicateGroups(assignmentsAfterRemap, bucketAssignmentFingerprint);
+    const removedAssignmentIds = assignmentDupes.flatMap(({ remove }) => remove.map((a) => a.id));
+    if (removedAssignmentIds.length > 0) {
+      await db.bucketAssignments.bulkDelete(removedAssignmentIds);
+    }
+
+    // 3) Transactions duplicated by semantic fingerprint (year/month/day/
+    // category/amount/comments/breakdown/travel reference).
+    const dayLookup = buildDayLookup(allYears, allMonths, allDays);
+    const txDupes = findDuplicateGroups(allTx, (t) => transactionFingerprint(t, dayLookup));
+    const removedTxIds = txDupes.flatMap(({ remove }) => remove.map((t) => t.id));
+    if (removedTxIds.length > 0) {
+      await db.transactions.bulkDelete(removedTxIds);
+    }
+
+    return {
+      bucketsRemoved: removedBucketIds.length,
+      assignmentsRemoved: removedAssignmentIds.length,
+      transactionsRemoved: removedTxIds.length,
+    };
+  };
+
   const commitImport = withErrorHandling("commitImport", async (data) => {
     const { years, months, days, transactions, travels, buckets, bucketAssignments } = data;
 
@@ -335,7 +409,11 @@ export function ExpenseProvider({ children }) {
     await db.days.bulkPut(days);
     await db.transactions.bulkPut(transactions);
 
+    const cleanup = await cleanupDuplicatesAfterImport();
+
     await reloadHierarchy();
+
+    return { cleanup };
   });
 
   // -------------------------

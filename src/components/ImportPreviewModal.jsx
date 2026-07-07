@@ -38,8 +38,13 @@ export default function ImportPreviewModal({ counts, onConfirm, onCancel, import
           ))}
         </div>
 
-        <p className="text-xs text-alert bg-alert-soft rounded-md px-3 py-2 mb-4">
+        <p className="text-xs text-alert bg-alert-soft rounded-md px-3 py-2 mb-2">
           Records with matching IDs in your current data will be overwritten. This cannot be undone.
+        </p>
+
+        <p className="text-xs text-ink-muted bg-surface-sunken rounded-md px-3 py-2 mb-4">
+          Duplicate transactions and buckets (matching by content, not just ID) are detected and
+          merged automatically after import - counts above are before that cleanup.
         </p>
 
         <div className="flex justify-end gap-3">

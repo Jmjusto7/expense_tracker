@@ -92,7 +92,7 @@ export default function YearExpensesPage() {
                 </span>
                 <ConfirmButton
                   onConfirm={() => removeYear(yearObj.id)}
-                  className="opacity-0 group-hover:opacity-100 text-ink-muted hover:text-alert transition-opacity p-1"
+                  className="opacity-70 group-hover:opacity-100 text-ink-muted hover:text-alert transition-opacity p-1"
                   confirmClassName="text-alert text-xs font-medium px-2 py-1 rounded-md bg-alert-soft"
                   title={`Delete ${yearObj.year}? Removes ${months} month${months === 1 ? "" : "s"} and ${transactions} transaction${transactions === 1 ? "" : "s"}.`}
                   confirmLabel="Sure?"

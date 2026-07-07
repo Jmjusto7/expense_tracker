@@ -1,13 +1,14 @@
-import { useParams, Link } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { useState, useMemo } from "react";
 import { useExpenseContext } from "../context/ExpenseContext";
-import { ArrowLeft, Plane, ChevronRight, X } from "lucide-react";
+import { Plane, ChevronRight, X } from "lucide-react";
 import { formatDate } from "../utils/dateHelpers";
 import { formatCurrency, formatCurrencyPrecise } from "../utils/formatCurrency";
 import { filterTransactionsByTravel, sumAmounts, findTravelById } from "../utils/travelHelpers";
 import { useBucketsWithCategories } from "../hooks/useBucketsWithCategories";
 import ExpensePieChart from "../components/ExpensePieChart";
 import BreakdownGrid from "../components/BreakdownGrid";
+import Breadcrumbs from "../components/Breadcrumbs";
 
 export default function TravelDetailPage() {
   const { travelId } = useParams();
@@ -132,13 +133,7 @@ export default function TravelDetailPage() {
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8">
-      <Link
-        to="/travels"
-        className="inline-flex items-center gap-1 text-sm text-ink-muted hover:text-ink transition-colors"
-      >
-        <ArrowLeft size={14} />
-        All travels
-      </Link>
+      <Breadcrumbs items={[{ label: "Travels", to: "/travels" }, { label: travel.title }]} />
 
       <div className="mt-3 mb-6">
         <div className="flex items-center gap-2">

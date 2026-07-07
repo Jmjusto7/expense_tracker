@@ -1,12 +1,13 @@
 import { useState, useEffect } from "react";
-import { useParams, useNavigate, Link } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { useExpenseContext } from "../context/ExpenseContext";
 import { useFilter } from "../context/FilterContext";
-import { ArrowLeft, Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { ALL_MONTHS } from "../utils/dateHelpers";
 import { formatCurrency } from "../utils/formatCurrency";
 import FilterBar from "../components/FilterBar";
 import ConfirmButton from "../components/ConfirmButton";
+import Breadcrumbs from "../components/Breadcrumbs";
 
 export default function MonthExpensesPage() {
   const { year } = useParams();
@@ -55,13 +56,7 @@ export default function MonthExpensesPage() {
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8">
       {/* Header */}
       <div className="mb-6">
-        <Link
-          to="/expenses"
-          className="inline-flex items-center gap-1 text-sm text-ink-muted hover:text-ink mb-2 transition-colors"
-        >
-          <ArrowLeft size={14} />
-          All years
-        </Link>
+        <Breadcrumbs items={[{ label: "Expenses", to: "/expenses" }, { label: year }]} />
         <h1 className="font-display text-2xl text-ink">{year} — Monthly Expenses</h1>
       </div>
 
@@ -137,7 +132,7 @@ export default function MonthExpensesPage() {
 
                     <ConfirmButton
                       onConfirm={() => handleRemoveMonth(month.id)}
-                      className="opacity-0 group-hover:opacity-100 text-ink-muted hover:text-alert transition-opacity p-1"
+                      className="opacity-70 group-hover:opacity-100 text-ink-muted hover:text-alert transition-opacity p-1"
                       confirmClassName="text-alert text-xs font-medium px-2 py-1 rounded-md bg-alert-soft"
                       title={`Delete ${month.name}? Removes ${dayCount} day${dayCount === 1 ? "" : "s"} and ${txCount} transaction${txCount === 1 ? "" : "s"}.`}
                       confirmLabel="Sure?"

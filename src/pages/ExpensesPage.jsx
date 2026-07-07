@@ -3,6 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import { Plus, Pencil, Plane } from "lucide-react";
 import AddTransactionModal from "../components/AddTransactionModal";
 import EditTransactionModal from "../components/EditTransactionModal";
+import EditSingleTransactionModal from "../components/EditSingleTransactionModal";
 import { useExpenseContext } from "../context/ExpenseContext";
 import { useFilter } from "../context/FilterContext";
 import { findTravelById, sumAmounts } from "../utils/travelHelpers";
@@ -10,6 +11,7 @@ import { formatCurrency } from "../utils/formatCurrency";
 import { formatDate } from "../utils/dateHelpers";
 import { formatBreakdownDisplay } from "../utils/amountHelpers";
 import FilterBar from "../components/FilterBar";
+import Breadcrumbs from "../components/Breadcrumbs";
 
 export default function ExpensesPage() {
   const { year, month } = useParams();
@@ -18,6 +20,7 @@ export default function ExpensesPage() {
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [editDay, setEditDay] = useState(null);
+  const [editingTransaction, setEditingTransaction] = useState(null);
 
   const yearInt = parseInt(year, 10);
   const yearObj = years.find((y) => y.year === yearInt);
@@ -60,16 +63,17 @@ export default function ExpensesPage() {
       <table className="w-full text-left border-collapse mb-4 text-sm">
         <thead>
           <tr className="bg-surface-sunken text-ink-muted text-xs uppercase tracking-wide">
-            <th className="border border-border px-3 py-2 w-[18%] font-medium">Category</th>
-            <th className="border border-border px-3 py-2 w-[35%] font-medium">Breakdown</th>
-            <th className="border border-border px-3 py-2 w-[110px] text-right font-medium">Total</th>
-            <th className="border border-border px-3 py-2 w-[15%] font-medium">Travel</th>
-            <th className="border border-border px-3 py-2 w-[27%] font-medium">Comments</th>
+            <th className="border border-border px-3 py-2 w-[17%] font-medium">Category</th>
+            <th className="border border-border px-3 py-2 w-[32%] font-medium">Breakdown</th>
+            <th className="border border-border px-3 py-2 w-[105px] text-right font-medium">Total</th>
+            <th className="border border-border px-3 py-2 w-[14%] font-medium">Travel</th>
+            <th className="border border-border px-3 py-2 w-[24%] font-medium">Comments</th>
+            <th className="border border-border px-3 py-2 w-[40px]"></th>
           </tr>
         </thead>
         <tbody>
           {transactions.map((t) => {
-            const travelTitle = findTravelById(travels, t.travelId)?.title || "";
+            const travel = findTravelById(travels, t.travelId);
 
             return (
               <tr key={t.id}>
@@ -85,12 +89,29 @@ export default function ExpensesPage() {
                   {formatCurrency(t.amount)}
                 </td>
 
-                <td className="border border-border px-3 py-2 text-travel-dark font-medium text-xs">
-                  {travelTitle && `✈ ${travelTitle}`}
+                <td className="border border-border px-3 py-2 text-xs">
+                  {travel && (
+                    <Link
+                      to={`/travels/${travel.id}`}
+                      className="text-travel-dark font-medium hover:underline"
+                    >
+                      ✈ {travel.title}
+                    </Link>
+                  )}
                 </td>
 
                 <td className="border border-border px-3 py-2 text-ink-muted">
                   {t.comments}
+                </td>
+
+                <td className="border border-border px-2 py-2 text-center">
+                  <button
+                    onClick={() => setEditingTransaction(t)}
+                    className="text-ink-muted hover:text-ledger-dark p-1"
+                    title="Edit this transaction"
+                  >
+                    <Pencil size={13} />
+                  </button>
                 </td>
               </tr>
             );
@@ -102,15 +123,16 @@ export default function ExpensesPage() {
 
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
-      <div className="flex justify-between items-center mb-6 gap-2">
+      <div className="flex justify-between items-center mb-2 gap-2">
         <div>
-          <Link
-            to={`/expenses/${year}`}
-            className="text-sm text-ink-muted hover:text-ink transition-colors"
-          >
-            ← {year}
-          </Link>
-          <h1 className="font-display text-2xl text-ink mt-1">
+          <Breadcrumbs
+            items={[
+              { label: "Expenses", to: "/expenses" },
+              { label: year, to: `/expenses/${year}` },
+              { label: month },
+            ]}
+          />
+          <h1 className="font-display text-2xl text-ink -mt-1">
             {month} {year}
           </h1>
         </div>
@@ -159,7 +181,7 @@ export default function ExpensesPage() {
             {/* Edit Button */}
             <button
               onClick={() => setEditDay(day)}
-              className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 text-ink-muted hover:text-ledger-dark hover:bg-surface-sunken rounded-md p-1.5 transition-all"
+              className="absolute top-4 right-4 opacity-70 group-hover:opacity-100 text-ink-muted hover:text-ledger-dark hover:bg-surface-sunken rounded-md p-1.5 transition-all"
               title="Edit Day"
             >
               <Pencil size={16} />
@@ -209,9 +231,12 @@ export default function ExpensesPage() {
                       <div className="flex items-center gap-1.5">
                         <Plane size={14} className="text-travel-dark" />
                         <div>
-                          <div className="font-semibold text-travel-dark">
+                          <Link
+                            to={`/travels/${travel?.id}`}
+                            className="font-semibold text-travel-dark hover:underline"
+                          >
                             {travel?.title || "Travel"}
-                          </div>
+                          </Link>
 
                           {travel?.startDate && travel?.endDate && (
                             <div className="text-xs text-travel-dark/70">
@@ -257,6 +282,14 @@ export default function ExpensesPage() {
               ?.transactions || []
           }
           onClose={() => setEditDay(null)}
+        />
+      )}
+
+      {/* EDIT SINGLE TRANSACTION MODAL */}
+      {editingTransaction && (
+        <EditSingleTransactionModal
+          transaction={editingTransaction}
+          onClose={() => setEditingTransaction(null)}
         />
       )}
     </div>

@@ -22,7 +22,7 @@ export default function Navbar() {
   const [importPreview, setImportPreview] = useState(null); // { data, counts }
   const [importError, setImportError] = useState("");
   const [importing, setImporting] = useState(false);
-  const [justImported, setJustImported] = useState(false);
+  const [importSuccessMessage, setImportSuccessMessage] = useState("");
 
   // Step 1: parse the file and show what it contains - no DB writes yet.
   const handleFileSelected = async (e) => {
@@ -35,8 +35,11 @@ export default function Navbar() {
       const { data, counts } = await parseImportFile(file);
       setImportPreview({ data, counts });
     } catch (err) {
-      setImportError("Couldn't read that file - make sure it's a valid export JSON.");
-      setTimeout(() => setImportError(""), 5000);
+      // parseImportFile throws descriptive errors for both bad JSON and
+      // structural mismatches - surface the real message rather than a
+      // generic one.
+      setImportError(err.message || "Couldn't read that file.");
+      setTimeout(() => setImportError(""), 6000);
     }
   };
 
@@ -44,10 +47,16 @@ export default function Navbar() {
   const handleConfirmImport = async () => {
     setImporting(true);
     try {
-      await commitImport(importPreview.data);
+      const { cleanup } = await commitImport(importPreview.data);
       setImportPreview(null);
-      setJustImported(true);
-      setTimeout(() => setJustImported(false), 4000);
+
+      const removed = cleanup.transactionsRemoved + cleanup.bucketsRemoved + cleanup.assignmentsRemoved;
+      setImportSuccessMessage(
+        removed > 0
+          ? `Imported. Cleaned up ${cleanup.transactionsRemoved} duplicate transaction${cleanup.transactionsRemoved === 1 ? "" : "s"}${cleanup.bucketsRemoved ? `, ${cleanup.bucketsRemoved} duplicate bucket${cleanup.bucketsRemoved === 1 ? "" : "s"}` : ""}.`
+          : "Imported successfully."
+      );
+      setTimeout(() => setImportSuccessMessage(""), 5000);
     } catch (err) {
       setImportError("Import failed - your existing data was not changed.");
       setTimeout(() => setImportError(""), 5000);
@@ -118,7 +127,7 @@ export default function Navbar() {
 
           <label className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-ink-muted hover:text-ink hover:bg-surface-sunken cursor-pointer transition-colors">
             <Upload size={15} />
-            <span className="hidden sm:inline">{justImported ? "Imported!" : "Import"}</span>
+            <span className="hidden sm:inline">Import</span>
             <input
               type="file"
               accept="application/json"
@@ -154,6 +163,14 @@ export default function Navbar() {
       {importError && (
         <div className="max-w-6xl mx-auto px-4 sm:px-6 pb-2">
           <p className="text-sm text-alert bg-alert-soft rounded-md px-3 py-2">{importError}</p>
+        </div>
+      )}
+
+      {importSuccessMessage && (
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 pb-2">
+          <p className="text-sm text-ledger-dark bg-ledger-soft rounded-md px-3 py-2">
+            {importSuccessMessage}
+          </p>
         </div>
       )}
 

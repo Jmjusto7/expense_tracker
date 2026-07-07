@@ -55,7 +55,7 @@ export default function TravelsPage() {
               className="group bg-surface rounded-lg border border-border hover:border-travel p-5 transition-colors relative block"
             >
               {/* Edit & Delete Buttons */}
-              <div className="absolute top-3 right-3 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="absolute top-3 right-3 flex gap-1.5 opacity-70 group-hover:opacity-100 transition-opacity">
                 <button
                   onClick={(e) => {
                     e.preventDefault();
