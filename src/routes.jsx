@@ -6,6 +6,8 @@ import TravelsPage from "./pages/TravelsPage";
 import TravelDetailPage from "./pages/TravelDetailPage";
 import ExpensesPage from "./pages/ExpensesPage";
 import SettingsPage from "./pages/SettingsPage";
+import AccountsPage from "./pages/AccountsPage";
+import AccountDetailPage from "./pages/AccountDetailPage";
 import HierarchyGuard from "./components/HierarchyGuard";
 
 export default function AppRoutes() {
@@ -49,6 +51,19 @@ export default function AppRoutes() {
         element={
           <HierarchyGuard>
             <TravelDetailPage />
+          </HierarchyGuard>
+        }
+      />
+
+      {/* Accounts list page */}
+      <Route path="/assets" element={<AccountsPage />} />
+
+      {/* Account detail */}
+      <Route
+        path="/assets/:accountId"
+        element={
+          <HierarchyGuard>
+            <AccountDetailPage />
           </HierarchyGuard>
         }
       />

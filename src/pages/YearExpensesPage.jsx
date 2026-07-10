@@ -4,7 +4,7 @@ import { Trash2, Plus } from "lucide-react";
 import { useExpenseContext } from "../context/ExpenseContext";
 import { useFilter } from "../context/FilterContext";
 import { formatCurrency } from "../utils/formatCurrency";
-import FilterBar from "../components/FilterBar";
+import ExpenseAnalytics from "../components/ExpenseAnalytics";
 import ConfirmButton from "../components/ConfirmButton";
 
 export default function YearExpensesPage() {
@@ -60,10 +60,16 @@ export default function YearExpensesPage() {
   };
 
   return (
-    <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8">
-      <h1 className="font-display text-2xl text-ink mb-6">Expenses by Year</h1>
+    <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
+      <h1 className="font-display text-2xl text-ink mb-6">Expenses</h1>
 
-      <FilterBar />
+      {/* Bucket/category drill-down, stat cards, and monthly trend now live
+          here - this is where filters get *set*; MonthExpensesPage and
+          ExpensesPage further down the hierarchy can still only remove
+          them via FilterBar. */}
+      <ExpenseAnalytics />
+
+      <h2 className="text-lg font-semibold text-ink mb-3">By Year</h2>
 
       <div className="space-y-3">
         {sortedYears.length === 0 && !addingYear && (

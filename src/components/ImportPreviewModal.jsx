@@ -7,6 +7,9 @@ const ROWS = [
   ["transactions", "Transactions"],
   ["travels", "Travels"],
   ["buckets", "Buckets"],
+  ["accounts", "Accounts"],
+  ["balanceEntries", "Balance Entries"],
+  ["accountTypes", "Account Types"],
 ];
 
 export default function ImportPreviewModal({ counts, onConfirm, onCancel, importing }) {
@@ -43,8 +46,8 @@ export default function ImportPreviewModal({ counts, onConfirm, onCancel, import
         </p>
 
         <p className="text-xs text-ink-muted bg-surface-sunken rounded-md px-3 py-2 mb-4">
-          Duplicate transactions and buckets (matching by content, not just ID) are detected and
-          merged automatically after import - counts above are before that cleanup.
+          Duplicate transactions, buckets, and accounts (matching by content, not just ID) are
+          detected and merged automatically after import - counts above are before that cleanup.
         </p>
 
         <div className="flex justify-end gap-3">

@@ -1,8 +1,7 @@
 import { NavLink, useNavigate } from "react-router-dom";
-import { Home, Receipt, Plane, Settings, Download, Upload, Plus } from "lucide-react";
+import { Home, Receipt, Plane, Settings, Download, Upload, Plus, Wallet } from "lucide-react";
 import { useState } from "react";
 import { useExpenseContext } from "../context/ExpenseContext";
-import { ALL_MONTHS } from "../utils/dateHelpers";
 import AddTransactionModal from "./AddTransactionModal";
 import ImportPreviewModal from "./ImportPreviewModal";
 
@@ -15,9 +14,8 @@ const navLinkClass = ({ isActive }) =>
 
 export default function Navbar() {
   const navigate = useNavigate();
-  const { years, addYear, addMonth, exportExpenses, parseImportFile, commitImport } =
-    useExpenseContext();
-  const [quickAddTarget, setQuickAddTarget] = useState(null); // { year, monthName, existingDays }
+  const { exportExpenses, parseImportFile, commitImport } = useExpenseContext();
+  const [showQuickAdd, setShowQuickAdd] = useState(false);
 
   const [importPreview, setImportPreview] = useState(null); // { data, counts }
   const [importError, setImportError] = useState("");
@@ -50,11 +48,30 @@ export default function Navbar() {
       const { cleanup } = await commitImport(importPreview.data);
       setImportPreview(null);
 
-      const removed = cleanup.transactionsRemoved + cleanup.bucketsRemoved + cleanup.assignmentsRemoved;
+      // Build a "N duplicate Xs" clause for every category that had
+      // something to clean up, in hierarchy order, then join into one
+      // sentence. Falls back to a plain success message when nothing
+      // needed deduping.
+      const parts = [
+        [cleanup.yearsRemoved, "year"],
+        [cleanup.monthsRemoved, "month"],
+        [cleanup.daysRemoved, "day"],
+        [cleanup.transactionsRemoved, "transaction"],
+        [cleanup.bucketsRemoved, "bucket"],
+        [cleanup.assignmentsRemoved, "bucket assignment"],
+        [cleanup.accountsRemoved, "account"],
+        [cleanup.balanceEntriesRemoved, "balance entry"],
+        [cleanup.accountTypesRemoved, "account type"],
+      ]
+        .filter(([count]) => count > 0)
+        .map(([count, label]) =>
+          label === "balance entry"
+            ? `${count} duplicate balance ${count === 1 ? "entry" : "entries"}`
+            : `${count} duplicate ${label}${count === 1 ? "" : "s"}`
+        );
+
       setImportSuccessMessage(
-        removed > 0
-          ? `Imported. Cleaned up ${cleanup.transactionsRemoved} duplicate transaction${cleanup.transactionsRemoved === 1 ? "" : "s"}${cleanup.bucketsRemoved ? `, ${cleanup.bucketsRemoved} duplicate bucket${cleanup.bucketsRemoved === 1 ? "" : "s"}` : ""}.`
-          : "Imported successfully."
+        parts.length > 0 ? `Imported. Cleaned up ${parts.join(", ")}.` : "Imported successfully."
       );
       setTimeout(() => setImportSuccessMessage(""), 5000);
     } catch (err) {
@@ -65,30 +82,11 @@ export default function Navbar() {
     }
   };
 
-  // "Add Transaction" from anywhere: resolves today's year/month, silently
-  // creating either if they don't exist yet, then opens the modal directly
-  // - skips the Year -> Month -> Add Transaction drill entirely for the
-  // most common case (logging something from today).
-  const handleQuickAdd = async () => {
-    const today = new Date();
-    const year = today.getFullYear();
-    const monthName = ALL_MONTHS[today.getMonth()];
-
-    // Read existingDays from the current snapshot before any creation -
-    // if the month already exists this is accurate; if it doesn't, it's
-    // correctly empty either way, so there's no race with reloadHierarchy.
-    const existingYearObj = years.find((y) => y.year === year);
-    const existingMonthObj = existingYearObj?.months?.find((m) => m.name === monthName);
-    const existingDays = existingMonthObj?.days?.map((d) => d.day) || [];
-
-    let yearId = existingYearObj?.id;
-    if (!yearId) yearId = await addYear(year);
-
-    let monthId = existingMonthObj?.id;
-    if (!monthId) monthId = await addMonth(yearId, monthName);
-
-    setQuickAddTarget({ year, monthName, existingDays });
-  };
+  // "Add Transaction" from anywhere: opens the modal in its free-date
+  // "quick add" mode (no year/month props), which resolves and creates
+  // whatever year/month/day the picked date needs at save time - so this
+  // isn't locked to today's month the way the old pre-resolved version was.
+  const handleQuickAdd = () => setShowQuickAdd(true);
 
   return (
     <header className="sticky top-0 z-40 bg-paper/95 backdrop-blur-sm border-b border-border">
@@ -111,6 +109,10 @@ export default function Navbar() {
             <NavLink to="/travels" className={navLinkClass}>
               <Plane size={15} />
               <span className="hidden sm:inline">Travels</span>
+            </NavLink>
+            <NavLink to="/assets" className={navLinkClass}>
+              <Wallet size={15} />
+              <span className="hidden sm:inline">Assets</span>
             </NavLink>
           </nav>
         </div>
@@ -174,13 +176,10 @@ export default function Navbar() {
         </div>
       )}
 
-      {quickAddTarget && (
+      {showQuickAdd && (
         <AddTransactionModal
-          year={quickAddTarget.year}
-          month={quickAddTarget.monthName}
-          existingDays={quickAddTarget.existingDays}
-          onClose={() => setQuickAddTarget(null)}
-          onSaved={() => navigate(`/expenses/${quickAddTarget.year}/${quickAddTarget.monthName}`)}
+          onClose={() => setShowQuickAdd(false)}
+          onSaved={({ year, monthName }) => navigate(`/expenses/${year}/${monthName}`)}
         />
       )}
 

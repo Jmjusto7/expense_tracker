@@ -2,13 +2,14 @@ import { getCategorySuggestion, getGhostText } from "../../utils/categoryHelpers
 
 // Text input with inline "ghost text" autocomplete against known categories.
 // Pressing Tab accepts the suggestion. Used by both Add/Edit transaction
-// modals for the Category column.
+// modals for the Category column, and by the Account Type name inputs.
 export default function CategoryAutocompleteInput({
   value,
   onChange,
   categories,
   disabled = false,
   inputRef,
+  onKeyDown,
 }) {
   const suggestion = getCategorySuggestion(categories, value);
   const ghostText = getGhostText(categories, value);
@@ -23,7 +24,9 @@ export default function CategoryAutocompleteInput({
           if (e.key === "Tab" && suggestion) {
             e.preventDefault();
             onChange(suggestion);
+            return;
           }
+          onKeyDown?.(e);
         }}
         className="w-full border border-border rounded-md px-2 py-1.5 text-sm bg-transparent relative text-ink focus:ring-2 focus:ring-ledger focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
         placeholder="Category"

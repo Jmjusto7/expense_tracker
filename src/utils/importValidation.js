@@ -11,6 +11,9 @@ const REQUIRED_FIELDS = {
   travels: ["id", "title"],
   buckets: ["id", "name"],
   bucketAssignments: ["id", "bucketId", "category"],
+  accounts: ["id", "name"],
+  balanceEntries: ["id", "accountId", "date", "type"],
+  accountTypes: ["id", "name"],
 };
 
 // Throws a descriptive Error if the parsed JSON doesn't match the expected

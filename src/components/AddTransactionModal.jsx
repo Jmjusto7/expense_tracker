@@ -20,6 +20,13 @@ const blankRow = () => ({
   travelId: "",
 });
 
+const toDateInputValue = (date) => date.toISOString().slice(0, 10);
+
+// year/month are optional: when omitted, the modal runs in "quick add"
+// mode - a plain, freely-editable date field (any day, any month, any
+// year) instead of the month-locked calendar, since there's no pre-picked
+// month to constrain it to. Year/month/day get resolved (and created if
+// missing) at save time instead of being required up front.
 export default function AddTransactionModal({
   year,
   month,
@@ -28,6 +35,8 @@ export default function AddTransactionModal({
   onSaved,
 }) {
   const {
+    addYear,
+    addMonth,
     addDay,
     addTransaction,
     getYearId,
@@ -36,11 +45,14 @@ export default function AddTransactionModal({
     travels
   } = useExpenseContext();
 
-  const monthIndex = ALL_MONTHS.indexOf(month);
-  const defaultDate = computeDefaultTransactionDate(year, monthIndex, existingDays);
+  const quickAdd = year == null || month == null;
+
+  const monthIndex = quickAdd ? null : ALL_MONTHS.indexOf(month);
+  const defaultDate = quickAdd ? new Date() : computeDefaultTransactionDate(year, monthIndex, existingDays);
 
   const [selectedDate, setSelectedDate] = useState(defaultDate);
-  const [isCalendarOpen, setIsCalendarOpen] = useState(!defaultDate);
+  const [isCalendarOpen, setIsCalendarOpen] = useState(!quickAdd && !defaultDate);
+  const [quickDateValue, setQuickDateValue] = useState(toDateInputValue(defaultDate || new Date()));
   const [rows, setRows] = useState([blankRow()]);
 
   const inputRefs = useRef({});
@@ -69,10 +81,10 @@ export default function AddTransactionModal({
   // Save
   // -----------------------
   const handleSave = async () => {
-    if (!selectedDate)
-      return alert("Please select a date first.");
+    const effectiveDate = quickAdd ? (quickDateValue ? new Date(quickDateValue + "T00:00:00") : null) : selectedDate;
 
-    const dayNumber = selectedDate.getDate();
+    if (!effectiveDate)
+      return alert("Please select a date first.");
 
     const validRows = rows.filter(
       r => r.category?.trim() && r.amount?.trim()
@@ -82,15 +94,28 @@ export default function AddTransactionModal({
       return alert("Please fill at least one valid transaction.");
 
     try {
-      const yearId = await getYearId(year);
-      const monthId = await getMonthId(yearId, month);
+      let yearId, monthId;
 
-      if (!yearId || !monthId) {
-        alert("Year or month not found in database.");
-        return;
+      if (quickAdd) {
+        // Resolve/create on demand - addYear/addMonth are already
+        // idempotent (return the existing id if one matches), so this is
+        // safe to call regardless of whether the picked date's year/month
+        // already exist.
+        const effectiveYear = effectiveDate.getFullYear();
+        const effectiveMonthName = ALL_MONTHS[effectiveDate.getMonth()];
+        yearId = await addYear(effectiveYear);
+        monthId = await addMonth(yearId, effectiveMonthName);
+      } else {
+        yearId = await getYearId(year);
+        monthId = await getMonthId(yearId, month);
+
+        if (!yearId || !monthId) {
+          alert("Year or month not found in database.");
+          return;
+        }
       }
 
-      const dayId = await addDay(yearId, monthId, dayNumber);
+      const dayId = await addDay(yearId, monthId, effectiveDate.getDate());
 
       for (const r of validRows) {
         const { total, breakdown } = parseAmountExpression(r.amount);
@@ -107,7 +132,10 @@ export default function AddTransactionModal({
         });
       }
 
-      onSaved?.();
+      onSaved?.({
+        year: quickAdd ? effectiveDate.getFullYear() : year,
+        monthName: quickAdd ? ALL_MONTHS[effectiveDate.getMonth()] : month,
+      });
       onClose();
     } catch (err) {
       console.error("Failed to save transactions:", err);
@@ -122,8 +150,10 @@ export default function AddTransactionModal({
     }
   };
 
-  const monthStart = new Date(year, monthIndex, 1);
-  const monthEnd = new Date(year, monthIndex + 1, 0);
+  const monthStart = quickAdd ? null : new Date(year, monthIndex, 1);
+  const monthEnd = quickAdd ? null : new Date(year, monthIndex + 1, 0);
+
+  const hasDate = quickAdd ? Boolean(quickDateValue) : Boolean(selectedDate);
 
   return (
     <>
@@ -137,37 +167,46 @@ export default function AddTransactionModal({
           </button>
 
           <h2 className="font-display text-xl text-ink mb-6">
-            Add Transactions — {month} {year}
+            {quickAdd ? "Add Transaction" : `Add Transactions — ${month} ${year}`}
           </h2>
 
           {/* DATE PICKER */}
           <div className="mb-6">
             <label className="text-sm text-ink-muted mb-1 block">
-              Select a Date
+              Date
             </label>
 
-            <DatePicker
-              onChange={(date) => {
-                setSelectedDate(date);
-                setIsCalendarOpen(false);
+            {quickAdd ? (
+              <input
+                type="date"
+                value={quickDateValue}
+                onChange={(e) => setQuickDateValue(e.target.value)}
+                className="border border-border rounded-md px-3 py-2 text-ink bg-surface focus:ring-2 focus:ring-ledger focus:outline-none"
+              />
+            ) : (
+              <DatePicker
+                onChange={(date) => {
+                  setSelectedDate(date);
+                  setIsCalendarOpen(false);
+                }}
+                value={selectedDate}
+                minDate={monthStart}
+                maxDate={monthEnd}
+                calendarIcon={null}
+                clearIcon={null}
+                format="y-MM-dd"
+                isOpen={isCalendarOpen}
+                calendarProps={{
+                activeStartDate: selectedDate || monthStart,
+                tileDisabled: ({ date, view }) => {
+                  if (view !== "month") return false;
+                  return date.getFullYear() === year &&
+                         date.getMonth() === monthIndex &&
+                         existingDays.includes(date.getDate());
+                },
               }}
-              value={selectedDate}
-              minDate={monthStart}
-              maxDate={monthEnd}
-              calendarIcon={null}
-              clearIcon={null}
-              format="y-MM-dd"
-              isOpen={isCalendarOpen}
-              calendarProps={{
-              activeStartDate: selectedDate || monthStart,
-              tileDisabled: ({ date, view }) => {
-                if (view !== "month") return false;
-                return date.getFullYear() === year &&
-                       date.getMonth() === monthIndex &&
-                       existingDays.includes(date.getDate());
-              },
-            }}
-          />
+            />
+            )}
           </div>
 
           {/* TABLE */}
@@ -191,7 +230,7 @@ export default function AddTransactionModal({
                         value={r.category}
                         onChange={(val) => handleChange(r.id, "category", val)}
                         categories={categories}
-                        disabled={!selectedDate}
+                        disabled={!hasDate}
                         inputRef={(el) => (inputRefs.current[`category-${r.id}`] = el)}
                       />
                     </td>
@@ -205,7 +244,7 @@ export default function AddTransactionModal({
                           handleChange(r.id, "amount", e.target.value)
                         }
                         className="money w-full border border-border rounded-md px-2 py-1.5 text-sm bg-transparent text-ink focus:ring-2 focus:ring-ledger focus:outline-none disabled:opacity-50"
-                        disabled={!selectedDate}
+                        disabled={!hasDate}
                       />
                     </td>
 
@@ -216,7 +255,7 @@ export default function AddTransactionModal({
                         onChange={(val) => handleChange(r.id, "travelId", val)}
                         onRequestAdd={() => requestAddTravel(r.id)}
                         travels={travels}
-                        disabled={!selectedDate}
+                        disabled={!hasDate}
                       />
                     </td>
 
@@ -230,7 +269,7 @@ export default function AddTransactionModal({
                         }
                         onKeyDown={(e) => handleCommentKeyDown(e, i)}
                         className="w-full border border-border rounded-md px-2 py-1.5 text-sm bg-transparent text-ink focus:ring-2 focus:ring-ledger focus:outline-none disabled:opacity-50"
-                        disabled={!selectedDate}
+                        disabled={!hasDate}
                       />
                     </td>
                   </tr>
@@ -242,7 +281,7 @@ export default function AddTransactionModal({
           <button
             onClick={handleAddRow}
             className="text-sm text-ledger-dark hover:underline mb-3 disabled:opacity-50 disabled:cursor-not-allowed"
-            disabled={!selectedDate}
+            disabled={!hasDate}
           >
             + Add Row
           </button>
@@ -258,7 +297,7 @@ export default function AddTransactionModal({
             <button
               onClick={handleSave}
               className="bg-ledger text-white px-4 py-2 rounded-lg hover:bg-ledger-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              disabled={!selectedDate}
+              disabled={!hasDate}
             >
               Save
             </button>

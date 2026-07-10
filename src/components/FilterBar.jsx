@@ -21,7 +21,8 @@ function Chip({ children, onRemove, accent = "ledger" }) {
   );
 }
 
-// Drop into any Expenses page to show the filter set on SummaryPage.
+// Drop into any Expenses page to show the filter set on the Expenses tab
+// (ExpenseAnalytics is where filters get set; this shows/removes them).
 // Renders nothing when no filter is active.
 export default function FilterBar() {
   const {

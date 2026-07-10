@@ -1,6 +1,7 @@
 // A grid of clickable amount/percent cards, used for drill-down analytics
-// (SummaryPage's bucket/category filter, TravelDetailPage's bucket/category
-// drill-down). Each item is {key, label, amount, percent, disabled?}.
+// (ExpenseAnalytics's bucket/category filter on the Expenses tab,
+// TravelDetailPage's bucket/category drill-down). Each item is
+// {key, label, amount, percent, disabled?}.
 // accent picks "ledger" or "travel" styling to match the page it's on.
 export default function BreakdownGrid({ items, activeKeys = [], onItemClick, accent = "ledger" }) {
   const isActive = (item) => activeKeys.includes(item.key);

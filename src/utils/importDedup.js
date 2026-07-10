@@ -61,9 +61,54 @@ export function transactionFingerprint(t, dayLookup) {
   ].join("|");
 }
 
+// Fingerprint: the year number itself - two year rows with the same
+// `year` value (e.g. two separate exports each containing their own
+// autoincrement row for "2026") are the same real-world year.
+export const yearFingerprint = (y) => y.year;
+
+// Fingerprint: (yearId, name) - matches the DB's own &[yearId+name]
+// unique index. Must be computed *after* any year-id remapping has been
+// applied, so months that now point at the same surviving year are
+// correctly recognized as duplicates of each other.
+export const monthFingerprint = (m) => `${m.yearId}:${m.name}`;
+
+// Fingerprint: (yearId, monthId, day) - matches the DB's own
+// &[yearId+monthId+day] unique index. Must be computed *after* both
+// year-id and month-id remapping have been applied.
+export const dayFingerprint = (d) => `${d.yearId}:${d.monthId}:${d.day}`;
+
 // Fingerprint: bucket name (trimmed, case-insensitive) - "Food" and " food "
 // are treated as the same bucket.
 export const bucketFingerprint = (b) => (b.name || "").trim().toLowerCase();
+
+// Fingerprint: account name (trimmed, case-insensitive) - same treatment as
+// buckets. Two exports each with their own "Bank A" row are the same
+// real-world account.
+export const accountFingerprint = (a) => (a.name || "").trim().toLowerCase();
+
+// Fingerprint: account type name (trimmed, case-insensitive) - same
+// treatment as buckets/accounts. Two exports each with their own
+// "Investment" row are the same real-world classification.
+export const accountTypeFingerprint = (t) => (t.name || "").trim().toLowerCase();
+
+// Fingerprint: a balanceEntries row's full content. Covers both shapes
+// (income has `amount`, reconciliation has `balance` - see
+// accounts-feature-plan-v2.md §1.1), so a content match only happens when
+// account, date, type, and the relevant value/category/comments all agree.
+// `date` is normalized to a plain day string first - existing DB rows carry
+// a real Date object, but freshly-imported rows are still whatever JSON.parse
+// produced (a string), and those need to fingerprint identically for a
+// cross-device duplicate to actually be recognized as one.
+export const balanceEntryFingerprint = (e) =>
+  [
+    e.accountId,
+    new Date(e.date).toISOString().slice(0, 10),
+    e.type,
+    e.amount ?? "",
+    e.balance ?? "",
+    e.category || "",
+    e.comments || "",
+  ].join("|");
 
 // Fingerprint: the (bucket, category) pairing itself.
 export const bucketAssignmentFingerprint = (a) => `${a.bucketId}:${a.category}`;

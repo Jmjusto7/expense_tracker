@@ -59,13 +59,13 @@ export function FilterProvider({ children }) {
   const filterState = { fromDate, toDate, selectedBucketIds, selectedCategoryFilters, buckets, travelDrillBucketId };
 
   // Full match (date + bucket/travel + category) - what every page outside
-  // SummaryPage should use.
+  // ExpenseAnalytics should use.
   const matches = useMemo(() => {
     return (t) => transactionMatchesFilter(t, filterState);
   }, [fromDate, toDate, selectedBucketIds, selectedCategoryFilters, buckets]);
 
-  // Date-only match - SummaryPage needs this stage in isolation to compute
-  // available categories before bucket/category narrowing is applied.
+  // Date-only match - ExpenseAnalytics needs this stage in isolation to
+  // compute available categories before bucket/category narrowing is applied.
   const matchesDate = useMemo(() => {
     return (t) => transactionMatchesDate(t, filterState);
   }, [fromDate, toDate]);

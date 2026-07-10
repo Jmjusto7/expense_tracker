@@ -1,5 +1,6 @@
 import { useState } from "react";
 import CategoryBucketing from "./settings/CategoryBucketing";
+import AccountTypes from "./settings/AccountTypes";
 import ClearDBTab from "./settings/ClearDB";
 
 const SettingsPage = () => {
@@ -7,6 +8,7 @@ const SettingsPage = () => {
 
   const tabs = [
     { id: "bucketing", label: "Category Bucketing" },
+    { id: "accountTypes", label: "Account Types" },
     { id: "presets", label: "Presets" },
     { id: "others", label: "Others" },
     { id: "clearDB", label: "Clear DB" },
@@ -39,6 +41,7 @@ const SettingsPage = () => {
         {/* Content */}
         <div className="flex-1 bg-surface border border-border rounded-lg p-6">
           {tab === "bucketing" && <CategoryBucketing />}
+          {tab === "accountTypes" && <AccountTypes />}
           {tab === "presets" && <div className="text-ink-muted">Presets settings here…</div>}
           {tab === "others" && <div className="text-ink-muted">Other settings here…</div>}
           {tab === "clearDB" && <ClearDBTab />}

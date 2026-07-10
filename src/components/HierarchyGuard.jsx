@@ -4,11 +4,28 @@ import { useExpenseContext } from "../context/ExpenseContext";
 
 export default function HierarchyGuard({ children }) {
   const navigate = useNavigate();
-  const { year: yearParam, month: monthParam, travelId } = useParams();
+  const { year: yearParam, month: monthParam, travelId, accountId } = useParams();
 
-  const { years, travels } = useExpenseContext();
+  const { years, travels, accounts } = useExpenseContext();
 
   useEffect(() => {
+    // =============================
+    // ACCOUNT DETAIL VALIDATION
+    // =============================
+    if (accountId) {
+      if (!accounts) return; // wait for load
+
+      const numericAccountId = Number(accountId);
+
+      const exists = accounts.some((a) => a.id === numericAccountId);
+
+      if (!exists) {
+        navigate("/assets", { replace: true });
+      }
+
+      return;
+    }
+
     // =============================
     // TRAVEL DETAIL VALIDATION
     // =============================
@@ -58,7 +75,7 @@ export default function HierarchyGuard({ children }) {
         }
       }
     }
-  }, [years, travels, yearParam, monthParam, travelId, navigate]);
+  }, [years, travels, accounts, yearParam, monthParam, travelId, accountId, navigate]);
 
   return children;
 }
