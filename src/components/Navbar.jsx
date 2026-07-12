@@ -1,4 +1,5 @@
 import { NavLink, useNavigate } from "react-router-dom";
+import { createPortal } from "react-dom";
 import { Home, Receipt, Plane, Settings, Download, Upload, Plus, Wallet } from "lucide-react";
 import { useState } from "react";
 import { useExpenseContext } from "../context/ExpenseContext";
@@ -176,21 +177,25 @@ export default function Navbar() {
         </div>
       )}
 
-      {showQuickAdd && (
-        <AddTransactionModal
-          onClose={() => setShowQuickAdd(false)}
-          onSaved={({ year, monthName }) => navigate(`/expenses/${year}/${monthName}`)}
-        />
-      )}
+      {showQuickAdd &&
+        createPortal(
+          <AddTransactionModal
+            onClose={() => setShowQuickAdd(false)}
+            onSaved={({ year, monthName }) => navigate(`/expenses/${year}/${monthName}`)}
+          />,
+          document.body
+        )}
 
-      {importPreview && (
-        <ImportPreviewModal
-          counts={importPreview.counts}
-          importing={importing}
-          onCancel={() => setImportPreview(null)}
-          onConfirm={handleConfirmImport}
-        />
-      )}
+      {importPreview &&
+        createPortal(
+          <ImportPreviewModal
+            counts={importPreview.counts}
+            importing={importing}
+            onCancel={() => setImportPreview(null)}
+            onConfirm={handleConfirmImport}
+          />,
+          document.body
+        )}
     </header>
   );
 }

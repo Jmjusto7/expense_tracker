@@ -76,18 +76,24 @@ export default function AccountsPage() {
             </span>
           </div>
 
-          <div className="mb-6">
-            <h3 className="text-sm font-semibold mb-2 text-ink">Composition</h3>
-            <AssetCompositionChart accounts={accounts} balanceEntries={balanceEntries} />
-          </div>
+          <div className="grid grid-cols-1 md:grid-cols-[3fr_2fr] gap-6 mb-6">
+            <div>
+              <h3 className="text-sm font-semibold mb-2 text-ink">Composition</h3>
+              <AssetCompositionChart accounts={accounts} balanceEntries={balanceEntries} />
+            </div>
 
-          <div className="mb-6">
-            <h3 className="text-sm font-semibold mb-2 text-ink">Allocation by Type</h3>
-            <AssetAllocationByTypeChart
-              accounts={accounts}
-              accountTypes={accountTypes}
-              balanceEntries={balanceEntries}
-            />
+            <div>
+              <h3 className="text-sm font-semibold mb-2 text-ink">Allocation by Type</h3>
+              <AssetAllocationByTypeChart
+                accounts={accounts}
+                accountTypes={accountTypes}
+                balanceEntries={balanceEntries}
+                heightClassName="h-56"
+                outerRadius={75}
+                innerRadius={42}
+                compactLabel
+              />
+            </div>
           </div>
 
           {monthlyIncomeExpenseData.length > 0 && (

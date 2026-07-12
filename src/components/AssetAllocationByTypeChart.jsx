@@ -14,7 +14,15 @@ const COLORS = [
   "#a1423b",
 ];
 
-export default function AssetAllocationByTypeChart({ accounts, accountTypes, balanceEntries }) {
+export default function AssetAllocationByTypeChart({
+  accounts,
+  accountTypes,
+  balanceEntries,
+  heightClassName = "h-72",
+  innerRadius = 55,
+  outerRadius = 100,
+  compactLabel = false,
+}) {
   const typeNameById = Object.fromEntries(accountTypes.map((t) => [t.id, t.name]));
 
   const groups = {};
@@ -41,7 +49,7 @@ export default function AssetAllocationByTypeChart({ accounts, accountTypes, bal
   }
 
   return (
-    <div className="money w-full h-72">
+    <div className={`money w-full ${heightClassName}`}>
       <ResponsiveContainer>
         <PieChart>
           <Pie
@@ -50,16 +58,16 @@ export default function AssetAllocationByTypeChart({ accounts, accountTypes, bal
             nameKey="name"
             cx="50%"
             cy="50%"
-            innerRadius={55}
-            outerRadius={100}
-            label={({ name, percent }) => `${name}: ${percent}%`}
+            innerRadius={innerRadius}
+            outerRadius={outerRadius}
+            label={({ name, percent }) => (compactLabel ? `${percent}%` : `${name}: ${percent}%`)}
           >
             {data.map((entry, index) => (
               <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
             ))}
           </Pie>
           <Tooltip
-            formatter={(value) => formatCurrencyPrecise(value)}
+            formatter={(value, name) => [formatCurrencyPrecise(value), name]}
             contentStyle={{ fontFamily: "var(--font-mono)", fontSize: 13 }}
           />
         </PieChart>

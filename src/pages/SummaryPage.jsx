@@ -7,20 +7,13 @@ import { daysSinceLastReconciliation } from "../utils/balanceHelpers";
 import { buildMonthlyIncomeExpense, findMonthRow } from "../utils/incomeExpenseHelpers";
 import NetWorthHeroCard from "../components/NetWorthHeroCard";
 import MonthSummaryCard from "../components/MonthSummaryCard";
-import IncomeExpenseTrendChart from "../components/IncomeExpenseTrendChart";
+import IncomeExpenseChart from "../components/IncomeExpenseChart";
 import QuickStatsPanel from "../components/QuickStatsPanel";
 
 // An account is treated as "needing attention" once its reconciliation is
 // more than 30 days stale (or it has none at all) - the one real thing
 // this dashboard has to notify about, rather than a decorative bell.
 const STALE_RECONCILIATION_DAYS = 30;
-
-const getGreeting = () => {
-  const hour = new Date().getHours();
-  if (hour < 12) return "Good Morning";
-  if (hour < 17) return "Good Afternoon";
-  return "Good Evening";
-};
 
 const SummaryPage = () => {
   const navigate = useNavigate();
@@ -116,14 +109,9 @@ const SummaryPage = () => {
   }, [accounts, balanceEntries]);
 
   return (
-    <div className="flex flex-col gap-4 p-6 lg:h-[calc(100vh-3.5rem)] lg:overflow-hidden">
-      {/* HEADER */}
-      <div className="shrink-0 flex items-center justify-between">
-        <div>
-          <h1 className="font-display text-2xl text-ink leading-tight">{getGreeting()}</h1>
-          <p className="text-sm text-ink-muted">Here's your financial overview.</p>
-        </div>
-
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 flex flex-col gap-4">
+      {/* Notification bell only - no greeting text */}
+      <div className="shrink-0 flex items-center justify-end">
         <button
           onClick={() => navigate("/assets")}
           className="relative p-2 rounded-full text-ink-muted hover:text-ink hover:bg-surface-sunken transition-colors"
@@ -142,19 +130,20 @@ const SummaryPage = () => {
         </button>
       </div>
 
-      {/* NET WORTH HERO - ~25% of dashboard height */}
-      <div className="shrink-0 basis-[30%] lg:basis-[26%] min-h-[220px]">
+      {/* NET WORTH HERO */}
+      <div className="h-[280px] shrink-0">
         <NetWorthHeroCard accounts={accounts} balanceEntries={balanceEntries} />
       </div>
 
-      {/* MONTHLY SUMMARY CARDS */}
-      <div className="shrink-0 basis-[16%] min-h-[130px] grid grid-cols-2 gap-4">
+      {/* MONTHLY SUMMARY CARDS - smaller than the hero, side by side */}
+      <div className="grid grid-cols-2 gap-4">
         <MonthSummaryCard
           label="This Month's Income"
           value={thisMonthIncome}
           changeAmount={incomeChangeAmount}
           changePct={incomeChangePct}
           accent="ledger"
+          compact
         />
         <MonthSummaryCard
           label="This Month's Expenses"
@@ -162,20 +151,25 @@ const SummaryPage = () => {
           changeAmount={expenseChangeAmount}
           changePct={expenseChangePct}
           accent="alert"
+          compact
         />
       </div>
 
-      {/* BOTTOM: TREND CHART + QUICK STATS, 2:1 */}
-      <div className="flex-1 min-h-[280px] grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-4">
-        <IncomeExpenseTrendChart data={monthlyRows} />
-        <QuickStatsPanel
-          savingsRatePct={savingsRatePct}
-          largestExpense={largestExpense}
-          topCategory={topCategory}
-          transactionCount={transactionCount}
-          transactionCountDelta={transactionCountDelta}
-          daysLeftInMonth={daysLeftInMonth}
-        />
+      {/* BOTTOM: TREND CHART (reusing the Assets-tab chart) + QUICK STATS */}
+      <div className="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-4">
+        <div className="h-[320px]">
+          <IncomeExpenseChart data={monthlyRows} />
+        </div>
+        <div className="h-[320px]">
+          <QuickStatsPanel
+            savingsRatePct={savingsRatePct}
+            largestExpense={largestExpense}
+            topCategory={topCategory}
+            transactionCount={transactionCount}
+            transactionCountDelta={transactionCountDelta}
+            daysLeftInMonth={daysLeftInMonth}
+          />
+        </div>
       </div>
     </div>
   );

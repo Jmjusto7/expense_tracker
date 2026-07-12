@@ -15,7 +15,13 @@ const COLORS = [
   "#a1423b",
 ];
 
-export default function AssetCompositionChart({ accounts, balanceEntries }) {
+export default function AssetCompositionChart({
+  accounts,
+  balanceEntries,
+  heightClassName = "h-72",
+  innerRadius = 55,
+  outerRadius = 100,
+}) {
   // Negative balances (e.g. a credit card) don't make sense as a positive
   // "share of assets" slice - they're excluded here rather than distorting
   // the chart, not silently dropped from the app overall.
@@ -33,7 +39,7 @@ export default function AssetCompositionChart({ accounts, balanceEntries }) {
   }
 
   return (
-    <div className="money w-full h-72">
+    <div className={`money w-full ${heightClassName}`}>
       <ResponsiveContainer>
         <PieChart>
           <Pie
@@ -42,8 +48,8 @@ export default function AssetCompositionChart({ accounts, balanceEntries }) {
             nameKey="name"
             cx="50%"
             cy="50%"
-            innerRadius={55}
-            outerRadius={100}
+            innerRadius={innerRadius}
+            outerRadius={outerRadius}
             label={({ name, value }) => `${name}: ${formatCurrencyPrecise(value)}`}
           >
             {data.map((entry, index) => (
