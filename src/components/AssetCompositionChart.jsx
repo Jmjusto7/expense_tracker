@@ -1,6 +1,6 @@
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 import { formatCurrencyPrecise } from "../utils/formatCurrency";
-import { getCurrentBalance } from "../utils/balanceHelpers";
+import { getCurrentValuePhp } from "../utils/balanceHelpers";
 
 // Same coordinated palette as ExpensePieChart, for visual consistency
 // across the app's charts.
@@ -22,12 +22,14 @@ export default function AssetCompositionChart({
   innerRadius = 55,
   outerRadius = 100,
 }) {
-  // Negative balances (e.g. a credit card) don't make sense as a positive
-  // "share of assets" slice - they're excluded here rather than distorting
-  // the chart, not silently dropped from the app overall.
+  // Negative values (e.g. a credit card) don't make sense as a positive
+  // "share of assets" slice - excluded here rather than distorting the
+  // chart, not silently dropped from the app overall. A foreign account
+  // with no price recorded yet (null value) is excluded the same way,
+  // rather than silently treated as 0.
   const data = accounts
-    .map((acc) => ({ name: acc.name, value: getCurrentBalance(balanceEntries, acc.id) || 0 }))
-    .filter((d) => d.value > 0)
+    .map((acc) => ({ name: acc.name, value: getCurrentValuePhp(balanceEntries, accounts, acc.id) }))
+    .filter((d) => d.value != null && d.value > 0)
     .sort((a, b) => b.value - a.value);
 
   if (data.length === 0) {

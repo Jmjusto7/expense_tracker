@@ -157,10 +157,10 @@ const SummaryPage = () => {
 
       {/* BOTTOM: TREND CHART (reusing the Assets-tab chart) + QUICK STATS */}
       <div className="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-4">
-        <div className="h-[320px]">
+        <div className="h-[300px]">
           <IncomeExpenseChart data={monthlyRows} />
         </div>
-        <div className="h-[320px]">
+        <div className="h-[300px]">
           <QuickStatsPanel
             savingsRatePct={savingsRatePct}
             largestExpense={largestExpense}

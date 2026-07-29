@@ -16,7 +16,8 @@ import {
   accountTypeFingerprint,
   balanceEntryFingerprint,
 } from "../utils/importDedup";
-import { isOldestReconciliation } from "../utils/balanceHelpers";
+import { isOldestReconciliation, getCurrentBalance, getCurrentValuePhp } from "../utils/balanceHelpers";
+import { ALL_MONTHS } from "../utils/dateHelpers";
 
 const ExpenseContext = createContext();
 
@@ -182,10 +183,65 @@ export function ExpenseProvider({ children }) {
   });
 
   const removeDay = withErrorHandling("removeDay", async (dayId) => {
+    const transactionsToDelete = await db.transactions.where({ dayId }).toArray();
     await db.transactions.where({ dayId }).delete();
+    for (const t of transactionsToDelete) {
+      await syncShadowExpenseEntry(t.id); // rows are already gone - this just cleans up any shadow
+    }
     await db.days.delete(dayId);
     await reloadHierarchy();
+    await reloadAssets();
   });
+
+  // Resolves the real calendar Date for a transaction's (yearId, monthId,
+  // dayId). Transactions themselves only store those three ids - the
+  // enriched dayNumber/monthName/yearNumber fields every page reads are
+  // computed in reloadHierarchy(), which a mid-write helper can't rely on
+  // being fresh. Returns null if any of the three rows is missing (never
+  // trusts stored ids blindly).
+  const resolveTransactionDate = async (yearId, monthId, dayId) => {
+    const [year, month, day] = await Promise.all([
+      db.years.get(yearId),
+      db.months.get(monthId),
+      db.days.get(dayId),
+    ]);
+    if (!year || !month || !day) return null;
+    return new Date(year.year, ALL_MONTHS.indexOf(month.name), day.day);
+  };
+
+  // Keeps a transaction's shadow "expense" balanceEntries row in sync with
+  // whatever the transaction currently looks like (see db.js v8 / Balance
+  // Transfers' addTransfer for the same paired-entry pattern). Always
+  // fully regenerated - delete then recreate - rather than patched
+  // incrementally, so the two can never quietly drift apart. A no-op if
+  // there was no shadow and the transaction isn't linked either way.
+  // Called after every add/update/delete on a transaction.
+  const syncShadowExpenseEntry = async (transactionId) => {
+    const existingShadow = await db.balanceEntries
+      .filter((e) => e.type === "expense" && e.sourceTransactionId === transactionId)
+      .first();
+    if (existingShadow) await db.balanceEntries.delete(existingShadow.id);
+
+    const transaction = await db.transactions.get(transactionId);
+    if (!transaction || transaction.accountId == null) return; // deleted, or not linked - nothing to shadow
+
+    const date = await resolveTransactionDate(transaction.yearId, transaction.monthId, transaction.dayId);
+    if (!date) return; // orphaned year/month/day - shouldn't happen, but never assumed
+
+    await db.balanceEntries.add({
+      accountId: transaction.accountId,
+      date,
+      type: "expense",
+      amount: -Number(transaction.amount || 0),
+      balance: null,
+      costBasis: null,
+      fee: null,
+      pricePerUnit: null,
+      category: transaction.category || null,
+      comments: transaction.comments || "",
+      sourceTransactionId: transactionId,
+    });
+  };
 
   // ---------------------------
   // Transaction operations
@@ -206,9 +262,12 @@ export function ExpenseProvider({ children }) {
         monthId,
         dayId,
         travelId: normalizeTravelId(transaction.travelId),
+        accountId: transaction.accountId ?? null,
       });
 
+      await syncShadowExpenseEntry(id);
       await reloadHierarchy();
+      await reloadAssets();
       return id;
     }
   );
@@ -221,13 +280,17 @@ export function ExpenseProvider({ children }) {
           ? { ...updatedFields, travelId: normalizeTravelId(updatedFields.travelId) }
           : updatedFields;
       await db.transactions.update(transactionId, normalizedFields);
+      await syncShadowExpenseEntry(transactionId);
       await reloadHierarchy();
+      await reloadAssets();
     }
   );
 
   const removeTransaction = withErrorHandling("removeTransaction", async (transactionId) => {
     await db.transactions.delete(transactionId);
+    await syncShadowExpenseEntry(transactionId); // transaction's gone - this just cleans up any shadow it had
     await reloadHierarchy();
+    await reloadAssets();
   });
 
   // ---------------------------
@@ -280,31 +343,88 @@ export function ExpenseProvider({ children }) {
   // ---------------------------
   // Account operations (Assets feature)
   //
-  // Deliberately independent of the expense hierarchy - no accountId on
-  // transactions, no shared reload. See accounts-feature-plan-v2.md.
+  // Transactions can now optionally be "Paid From" an account (see db.js
+  // v8 / linked-transactions-plan.md) - accounts and the expense hierarchy
+  // are no longer fully independent the way accounts-feature-plan-v2
+  // originally described. Linking is per-transaction and always optional;
+  // most transactions are still expected to stay unlinked.
   // ---------------------------
   const addAccount = withErrorHandling(
     "addAccount",
-    async ({ name, startingBalance, startingDate, typeId = null }) => {
+    async ({
+      name,
+      startingBalance,
+      startingDate,
+      typeId = null,
+      unit = null,
+      costCurrencyAccountId = null,
+      startingCostBasis = null, // only meaningful when unit is set - see below
+      startingPrice = null, // only meaningful when unit is set; the UI requires this for foreign accounts
+    }) => {
       const accountId = await db.accounts.add({
         name: name.trim(),
         typeId: typeId ?? null,
+        unit: unit || null,
+        costCurrencyAccountId: unit ? costCurrencyAccountId ?? null : null,
         createdAt: new Date(),
       });
 
-      // The starting balance is just this account's first reconciliation -
-      // there's no separate openingBalance field (plan §1.2). Every
-      // account always has at least this one reconciliation to anchor its
-      // balance history.
+      const hasKnownCostBasis =
+        Boolean(unit) && startingCostBasis != null && startingCostBasis !== "";
+
+      // The anchor: if we also know what the starting units cost, the
+      // anchor is "0 held" and a separate convert entry brings it up to
+      // the starting balance while recording that cost (reconciliation
+      // entries have no costBasis field - only convert entries do, see
+      // foreign-assets-plan.md §2.2). Otherwise (PHP accounts, or foreign
+      // accounts where cost basis isn't known), the starting balance IS
+      // the reconciliation itself, same as before - there's no separate
+      // openingBalance field.
       await db.balanceEntries.add({
         accountId,
         date: new Date(startingDate),
         type: "reconciliation",
         amount: null,
-        balance: Number(startingBalance) || 0,
+        balance: hasKnownCostBasis ? 0 : Number(startingBalance) || 0,
+        costBasis: null,
+        fee: null,
+        pricePerUnit: null,
         category: null,
         comments: "Starting balance",
       });
+
+      if (hasKnownCostBasis) {
+        await db.balanceEntries.add({
+          accountId,
+          date: new Date(startingDate),
+          type: "convert",
+          amount: Number(startingBalance) || 0,
+          balance: null,
+          costBasis: Number(startingCostBasis),
+          fee: null,
+          pricePerUnit: null,
+          category: null,
+          comments: "Starting units",
+        });
+      }
+
+      // Foreign accounts need a price before anything downstream can show
+      // a value at all - the UI requires this field, but it's guarded
+      // here too rather than trusted blindly.
+      if (unit && startingPrice != null && startingPrice !== "") {
+        await db.balanceEntries.add({
+          accountId,
+          date: new Date(startingDate),
+          type: "markPrice",
+          amount: null,
+          balance: null,
+          costBasis: null,
+          fee: null,
+          pricePerUnit: Number(startingPrice),
+          category: null,
+          comments: "Starting price",
+        });
+      }
 
       await reloadAssets();
       return accountId;
@@ -317,13 +437,16 @@ export function ExpenseProvider({ children }) {
   });
 
   const removeAccount = withErrorHandling("removeAccount", async (accountId) => {
-    // Cascade-delete, unlike Travel removal (which unlinks). An income or
-    // reconciliation entry orphaned from its account isn't meaningful on
-    // its own the way an expense transaction is meaningful without a
-    // travel tag - see plan §6.
+    // Cascade-delete balanceEntries, unlike Travel removal (which unlinks).
+    // An income/reconciliation entry - or a shadow "expense" entry for a
+    // transaction that was linked here - orphaned from its account isn't
+    // meaningful on its own the way a transaction is meaningful without an
+    // account tag - see plan §6. The real transactions survive, unlinked.
     await db.balanceEntries.where({ accountId }).delete();
+    await db.transactions.where({ accountId }).modify({ accountId: null });
     await db.accounts.delete(accountId);
     await reloadAssets();
+    await reloadHierarchy(); // transactions changed too (unlinked), not just assets
   });
 
   const addIncomeEntry = withErrorHandling(
@@ -364,6 +487,204 @@ export function ExpenseProvider({ children }) {
     }
   );
 
+  // Convert: PHP (or another tracked currency, chained via
+  // costCurrencyAccountId) becomes units of this account - the "Buy"/
+  // "Convert" action for accounts with a `unit` set. Distinct from
+  // addIncomeEntry, which stays PHP-accounts-only and untouched (see
+  // foreign-assets-plan.md §0/§2.2 - a conversion is not income).
+  const addConvertEntry = withErrorHandling(
+    "addConvertEntry",
+    async (accountId, { date, amount, costBasis, fee = null, feeCategory = null, comments }) => {
+      const id = await db.balanceEntries.add({
+        accountId,
+        date: new Date(date),
+        type: "convert",
+        amount: Number(amount),
+        balance: null,
+        costBasis: Number(costBasis),
+        fee: fee != null && fee !== "" ? Number(fee) : null,
+        pricePerUnit: null,
+        category: null,
+        comments: comments?.trim() || "",
+      });
+
+      // Fee auto-logging - the one deliberate exception to accounts and
+      // expenses staying independent (foreign-assets-plan.md §5), scoped
+      // narrowly to conversion fees. Skipped entirely if no fee was given,
+      // so this changes nothing for a plain conversion.
+      //
+      // Known limitation: the resulting transaction is only linked back to
+      // this convert entry via its `comments` text, not a real reference -
+      // deleting the convert entry later does not delete or adjust the fee
+      // transaction. Acceptable for v1; would need a proper FK to do more.
+      if (fee != null && fee !== "" && Number(fee) > 0) {
+        const [allAccounts, allEntries] = await Promise.all([
+          db.accounts.toArray(),
+          db.balanceEntries.toArray(),
+        ]);
+        const account = allAccounts.find((a) => a.id === accountId);
+
+        let feeInPhp = Number(fee);
+        let feeNote = "";
+
+        if (account?.costCurrencyAccountId != null) {
+          // Fee is in a foreign currency - convert to PHP via the same
+          // chained lookup used everywhere else, at the conversion date.
+          const refUnits = getCurrentBalance(allEntries, account.costCurrencyAccountId, new Date(date));
+          const refValuePhp = getCurrentValuePhp(
+            allEntries,
+            allAccounts,
+            account.costCurrencyAccountId,
+            new Date(date)
+          );
+          if (refUnits && refValuePhp != null) {
+            const rate = refValuePhp / refUnits;
+            feeInPhp = Number(fee) * rate;
+            feeNote = ` ($${Number(fee).toFixed(2)} \u2248 \u20b1${feeInPhp.toFixed(2)})`;
+          }
+        }
+
+        const feeDate = new Date(date);
+        const category = feeCategory?.trim() || "Fees";
+
+        const yearId = await addYear(feeDate.getFullYear());
+        const monthId = await addMonth(yearId, ALL_MONTHS[feeDate.getMonth()]);
+        const dayId = await addDay(yearId, monthId, feeDate.getDate());
+
+        // The transactions table enforces one row per (day, category) -
+        // merge into an existing same-day/same-category row (via the
+        // amount-breakdown feature) rather than risking addTransaction's
+        // own idempotent existence-check silently dropping a second fee.
+        const existingFeeTx = await db.transactions
+          .where("[yearId+monthId+dayId+category]")
+          .equals([yearId, monthId, dayId, category])
+          .first();
+
+        if (existingFeeTx) {
+          const newBreakdown = [...(existingFeeTx.amountBreakdown || [existingFeeTx.amount]), feeInPhp];
+          await db.transactions.update(existingFeeTx.id, {
+            amount: newBreakdown.reduce((s, v) => s + Number(v), 0),
+            amountBreakdown: newBreakdown,
+            comments: existingFeeTx.comments
+              ? `${existingFeeTx.comments}; auto-logged fee${feeNote}`
+              : `Auto-logged: ${account?.name || "account"} conversion fee${feeNote}`,
+          });
+        } else {
+          await db.transactions.add({
+            yearId,
+            monthId,
+            dayId,
+            category,
+            amount: feeInPhp,
+            amountBreakdown: [feeInPhp],
+            comments: `Auto-logged: ${account?.name || "account"} conversion fee${feeNote}`,
+            travelId: null,
+          });
+        }
+
+        await reloadHierarchy();
+      }
+
+      await reloadAssets();
+      return id;
+    }
+  );
+
+  // A pure valuation snapshot - "1 unit = X cost-currency, as of today."
+  // Doesn't touch units held, the same way a reconciliation doesn't touch
+  // cost basis (foreign-assets-plan.md §2.2).
+  const addMarkPrice = withErrorHandling(
+    "addMarkPrice",
+    async (accountId, { date, pricePerUnit, comments }) => {
+      const id = await db.balanceEntries.add({
+        accountId,
+        date: new Date(date),
+        type: "markPrice",
+        amount: null,
+        balance: null,
+        costBasis: null,
+        fee: null,
+        pricePerUnit: Number(pricePerUnit),
+        category: null,
+        comments: comments?.trim() || "",
+      });
+      await reloadAssets();
+      return id;
+    }
+  );
+
+  // Transfer: moves units between two of the user's own accounts. Unlike
+  // Convert, this never changes what the units *are* - both legs must
+  // share the same `unit` (null == null counts, i.e. two ordinary PHP
+  // accounts). Crossing currencies is a Transfer-then-Convert flow
+  // instead: move PHP in via a same-unit transfer, then Convert it, which
+  // already handles cost basis and fees correctly - see
+  // balance-transfers-plan.md.
+  //
+  // Written as two balanceEntries rows (type "transfer") linked by a
+  // generated transferGroupId: a negative-amount leg on the source
+  // account, a positive-amount leg on the destination. Deliberately NOT
+  // logged as "income" on the destination or implied-spend on the source -
+  // getInflowEntries in balanceHelpers.js folds both legs into the normal
+  // balance walk so neither side is misreported.
+  const addTransfer = withErrorHandling(
+    "addTransfer",
+    async (fromAccountId, toAccountId, { date, amount, comments }) => {
+      if (fromAccountId === toAccountId) {
+        throw new Error("Can't transfer an account to itself.");
+      }
+
+      const allAccounts = await db.accounts.toArray();
+      const fromAccount = allAccounts.find((a) => a.id === fromAccountId);
+      const toAccount = allAccounts.find((a) => a.id === toAccountId);
+      if (!fromAccount || !toAccount) throw new Error("Account not found.");
+
+      if ((fromAccount.unit || null) !== (toAccount.unit || null)) {
+        throw new Error(
+          "Transfers must be between accounts of the same currency/unit - use Convert first if you need to change currencies."
+        );
+      }
+
+      const transferGroupId = `xfer_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+      const amt = Number(amount);
+      const trimmedComments = comments?.trim() || "";
+      const entryDate = new Date(date);
+
+      const outId = await db.balanceEntries.add({
+        accountId: fromAccountId,
+        date: entryDate,
+        type: "transfer",
+        amount: -amt,
+        balance: null,
+        costBasis: null,
+        fee: null,
+        pricePerUnit: null,
+        category: null,
+        comments: trimmedComments,
+        transferGroupId,
+        counterpartAccountId: toAccountId,
+      });
+
+      const inId = await db.balanceEntries.add({
+        accountId: toAccountId,
+        date: entryDate,
+        type: "transfer",
+        amount: amt,
+        balance: null,
+        costBasis: null,
+        fee: null,
+        pricePerUnit: null,
+        category: null,
+        comments: trimmedComments,
+        transferGroupId,
+        counterpartAccountId: fromAccountId,
+      });
+
+      await reloadAssets();
+      return { transferGroupId, outId, inId };
+    }
+  );
+
   const removeBalanceEntry = withErrorHandling("removeBalanceEntry", async (entryId) => {
     // Fetch fresh from DB rather than trusting the balanceEntries closure -
     // same caution as cleanBucketAssignments below.
@@ -375,6 +696,18 @@ export function ExpenseProvider({ children }) {
       throw new Error(
         "Can't delete an account's earliest reconciliation - it anchors the whole balance history. Delete the account itself if you want to remove it entirely."
       );
+    }
+
+    // A transfer only makes sense as a pair - deleting one leg without the
+    // other would leave the money "created" or "destroyed" on whichever
+    // side survives. Always remove both legs together via transferGroupId.
+    if (entry.type === "transfer" && entry.transferGroupId) {
+      const pairIds = allEntries
+        .filter((e) => e.transferGroupId === entry.transferGroupId)
+        .map((e) => e.id);
+      await db.balanceEntries.bulkDelete(pairIds);
+      await reloadAssets();
+      return;
     }
 
     await db.balanceEntries.delete(entryId);
@@ -669,6 +1002,20 @@ export function ExpenseProvider({ children }) {
     if (workingDays.length > 0) await db.days.bulkPut(workingDays);
     if (workingTx.length > 0) await db.transactions.bulkPut(workingTx);
 
+    // If a transaction that was linked to an account gets removed as a
+    // duplicate above, its shadow "expense" entry must go with it -
+    // otherwise the surviving (kept) duplicate's own shadow entry would
+    // double-count the same real-world expense against that account's
+    // balance.
+    if (removedTxIds.length > 0) {
+      const orphanedShadows = allBalanceEntries.filter(
+        (e) => e.type === "expense" && e.sourceTransactionId != null && removedTxIds.includes(e.sourceTransactionId)
+      );
+      if (orphanedShadows.length > 0) {
+        await db.balanceEntries.bulkDelete(orphanedShadows.map((e) => e.id));
+      }
+    }
+
     // =====================================================================
     // Step 7: Buckets / bucket assignments - unchanged from before.
     // =====================================================================
@@ -727,6 +1074,40 @@ export function ExpenseProvider({ children }) {
       for (const e of toRemap) {
         await db.balanceEntries.update(e.id, { accountId: accountIdRemap[e.accountId] });
       }
+
+      // A transfer's OTHER leg can reference a removed duplicate account
+      // via counterpartAccountId even when this leg's own accountId didn't
+      // need remapping - checked independently of the accountId remap
+      // above rather than only for entries already caught by it.
+      const transfersReferencingRemoved = allBalanceEntries.filter(
+        (e) => e.type === "transfer" && e.counterpartAccountId != null && removedAccountIds.includes(e.counterpartAccountId)
+      );
+      for (const e of transfersReferencingRemoved) {
+        await db.balanceEntries.update(e.id, { counterpartAccountId: accountIdRemap[e.counterpartAccountId] });
+      }
+
+      // Any OTHER account whose costCurrencyAccountId points at a removed
+      // duplicate (e.g. a stock account priced against a USD wallet that
+      // just got deduped) needs that reference remapped too - otherwise it
+      // would dangle, pointing at a deleted account id.
+      const accountsReferencingRemoved = allAccounts.filter(
+        (a) => a.costCurrencyAccountId != null && removedAccountIds.includes(a.costCurrencyAccountId)
+      );
+      for (const a of accountsReferencingRemoved) {
+        await db.accounts.update(a.id, { costCurrencyAccountId: accountIdRemap[a.costCurrencyAccountId] });
+      }
+
+      // Real transactions linked via "Paid From" also reference accounts
+      // directly (separate table from balanceEntries) - same remap, so a
+      // linked transaction never ends up pointing at a deleted account id.
+      const transactionsAfterTxWrite = await db.transactions.toArray();
+      const transactionsReferencingRemoved = transactionsAfterTxWrite.filter(
+        (t) => t.accountId != null && removedAccountIds.includes(t.accountId)
+      );
+      for (const t of transactionsReferencingRemoved) {
+        await db.transactions.update(t.id, { accountId: accountIdRemap[t.accountId] });
+      }
+
       await db.accounts.bulkDelete(removedAccountIds);
     }
 
@@ -920,6 +1301,9 @@ export function ExpenseProvider({ children }) {
     removeAccount,
     addIncomeEntry,
     addReconciliation,
+    addConvertEntry,
+    addMarkPrice,
+    addTransfer,
     removeBalanceEntry,
     incomeCategories,
 

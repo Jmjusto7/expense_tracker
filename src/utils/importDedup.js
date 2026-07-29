@@ -44,8 +44,9 @@ export function buildDayLookup(years, months, days) {
 }
 
 // Fingerprint: year, month, day, category, amount, comments, breakdown,
-// and travel reference - two transactions matching on all of these are
-// treated as the same real-world expense, regardless of id.
+// travel reference, and account reference ("Paid From") - two transactions
+// matching on all of these are treated as the same real-world expense,
+// regardless of id.
 export function transactionFingerprint(t, dayLookup) {
   const period = dayLookup[t.dayId] || {};
   const breakdown = Array.isArray(t.amountBreakdown) ? t.amountBreakdown.join(",") : "";
@@ -58,6 +59,7 @@ export function transactionFingerprint(t, dayLookup) {
     t.comments || "",
     breakdown,
     t.travelId ?? "null",
+    t.accountId ?? "null",
   ].join("|");
 }
 
@@ -91,14 +93,20 @@ export const accountFingerprint = (a) => (a.name || "").trim().toLowerCase();
 // "Investment" row are the same real-world classification.
 export const accountTypeFingerprint = (t) => (t.name || "").trim().toLowerCase();
 
-// Fingerprint: a balanceEntries row's full content. Covers both shapes
-// (income has `amount`, reconciliation has `balance` - see
-// accounts-feature-plan-v2.md §1.1), so a content match only happens when
-// account, date, type, and the relevant value/category/comments all agree.
+// Fingerprint: a balanceEntries row's full content. Covers all five shapes
+// (income has `amount`; reconciliation has `balance`; convert has `amount`
+// + `costBasis` + optional `fee`; markPrice has `pricePerUnit`; transfer
+// has `amount` + `counterpartAccountId` - see foreign-assets-plan.md §2.2
+// and balance-transfers-plan.md), so a content match only happens when
+// account, date, type, and every relevant field all agree.
 // `date` is normalized to a plain day string first - existing DB rows carry
 // a real Date object, but freshly-imported rows are still whatever JSON.parse
 // produced (a string), and those need to fingerprint identically for a
 // cross-device duplicate to actually be recognized as one.
+// `transferGroupId` is deliberately excluded - it's an arbitrary id
+// generated at creation time, not a meaningful property of the transfer
+// itself, so two independently-created (but content-identical) transfers
+// would otherwise never be recognized as duplicates of each other.
 export const balanceEntryFingerprint = (e) =>
   [
     e.accountId,
@@ -106,8 +114,12 @@ export const balanceEntryFingerprint = (e) =>
     e.type,
     e.amount ?? "",
     e.balance ?? "",
+    e.costBasis ?? "",
+    e.fee ?? "",
+    e.pricePerUnit ?? "",
     e.category || "",
     e.comments || "",
+    e.type === "transfer" ? e.counterpartAccountId ?? "" : "",
   ].join("|");
 
 // Fingerprint: the (bucket, category) pairing itself.

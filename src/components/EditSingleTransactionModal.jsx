@@ -5,10 +5,11 @@ import { parseAmountExpression } from "../utils/amountHelpers";
 import { useInlineAddTravel } from "../hooks/useInlineAddTravel";
 import CategoryAutocompleteInput from "./transaction-row/CategoryAutocompleteInput";
 import TravelSelectCell from "./transaction-row/TravelSelectCell";
+import AccountSelectCell from "./transaction-row/AccountSelectCell";
 import ConfirmButton from "./ConfirmButton";
 
 export default function EditSingleTransactionModal({ transaction, onClose }) {
-  const { updateTransaction, removeTransaction, categories, travels } = useExpenseContext();
+  const { updateTransaction, removeTransaction, categories, travels, accounts } = useExpenseContext();
 
   const [category, setCategory] = useState(transaction.category || "");
   const [amount, setAmount] = useState(
@@ -16,6 +17,7 @@ export default function EditSingleTransactionModal({ transaction, onClose }) {
   );
   const [comments, setComments] = useState(transaction.comments || "");
   const [travelId, setTravelId] = useState(transaction.travelId || "");
+  const [accountId, setAccountId] = useState(transaction.accountId ?? null);
   const [error, setError] = useState("");
 
   const { requestAddTravel, inlineAddTravelModal } = useInlineAddTravel(
@@ -35,6 +37,7 @@ export default function EditSingleTransactionModal({ transaction, onClose }) {
         amountBreakdown: breakdown,
         comments: comments.trim(),
         travelId: travelId || null,
+        accountId: accountId || null,
       });
       onClose();
     } catch (err) {
@@ -97,6 +100,11 @@ export default function EditSingleTransactionModal({ transaction, onClose }) {
                 onRequestAdd={() => requestAddTravel(transaction.id)}
                 travels={travels}
               />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-ink-muted mb-1">Paid From</label>
+              <AccountSelectCell value={accountId} onChange={setAccountId} accounts={accounts} />
             </div>
 
             <div>

@@ -1,6 +1,6 @@
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 import { formatCurrencyPrecise } from "../utils/formatCurrency";
-import { getCurrentBalance } from "../utils/balanceHelpers";
+import { getCurrentValuePhp } from "../utils/balanceHelpers";
 
 // Same coordinated palette as the other pie charts in the app.
 const COLORS = [
@@ -27,11 +27,11 @@ export default function AssetAllocationByTypeChart({
 
   const groups = {};
   accounts.forEach((acc) => {
-    const balance = getCurrentBalance(balanceEntries, acc.id) || 0;
-    if (balance <= 0) return; // same "no negative slices" treatment as AssetCompositionChart
+    const value = getCurrentValuePhp(balanceEntries, accounts, acc.id);
+    if (value == null || value <= 0) return; // same "no negative/unknown slices" treatment as AssetCompositionChart
 
     const label = acc.typeId != null ? typeNameById[acc.typeId] || "Unclassified" : "Unclassified";
-    groups[label] = (groups[label] || 0) + balance;
+    groups[label] = (groups[label] || 0) + value;
   });
 
   const total = Object.values(groups).reduce((s, v) => s + v, 0);

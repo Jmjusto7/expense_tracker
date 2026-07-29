@@ -7,11 +7,22 @@
 // already exists, and the very next call to any of these functions
 // reflects it correctly, with no separate "recompute" step anywhere.
 //
-// Entry shape (see db.js v5):
-//   { id, accountId, date, type: "income" | "reconciliation",
-//     amount, balance, category, comments }
-// - "income"        -> `amount` is set (signed, normally positive), `balance` is null
-// - "reconciliation" -> `balance` is set (the absolute observed balance), `amount` is null
+// Entry shape (see db.js v7, and foreign-assets-plan.md for the full story):
+//   { id, accountId, date, type, amount, balance, costBasis, fee,
+//     pricePerUnit, category, comments }
+// - "income"         -> `amount` set (units received, PHP accounts only). `balance`/`costBasis`/`pricePerUnit` null.
+// - "convert"        -> `amount` set (units received) + `costBasis` set (cost-currency spent for this batch,
+//                        PHP for a one-hop account, another tracked currency for a two-hop account) + optional `fee`.
+// - "reconciliation" -> `balance` set (the absolute observed units held, a snapshot not a delta).
+// - "markPrice"      -> `pricePerUnit` set (this account's cost-currency per unit, as of `date`).
+//
+// Account shape relevant here (see db.js v7):
+//   { id, name, typeId, unit, costCurrencyAccountId }
+// - `unit` null            -> ordinary PHP account, everything below is a no-op/identity for it.
+// - `unit` set              -> holds units of something else (USD, AAPL, ...).
+// - `costCurrencyAccountId` null   -> priced directly in PHP (e.g. a USD wallet).
+// - `costCurrencyAccountId` set    -> priced in whatever THAT account holds (e.g. a stock priced in USD),
+//                                     chained through as many hops as necessary.
 
 // Truncates a Date (or date-like value) to a day-precision timestamp, so
 // entries logged on the same calendar day compare equal regardless of any
@@ -44,6 +55,43 @@ export function getIncomeEntries(entries, accountId) {
   return getAccountEntriesSorted(entries, accountId).filter((e) => e.type === "income");
 }
 
+export function getConvertEntries(entries, accountId) {
+  return getAccountEntriesSorted(entries, accountId).filter((e) => e.type === "convert");
+}
+
+export function getMarkPriceEntries(entries, accountId) {
+  return getAccountEntriesSorted(entries, accountId).filter((e) => e.type === "markPrice");
+}
+
+// Transfer entries always come in a same-unit pair (see ExpenseContext's
+// addTransfer) - a negative-amount leg on the source account, a
+// positive-amount leg on the destination, linked by transferGroupId.
+// Exposed mainly for display (AccountDetailPage's counterpart note); the
+// balance-walk below folds them into getInflowEntries since they're
+// already signed correctly either direction.
+export function getTransferEntries(entries, accountId) {
+  return getAccountEntriesSorted(entries, accountId).filter((e) => e.type === "transfer");
+}
+
+// Entries that add units to an account - "income" (PHP accounts),
+// "convert" (accounts with a unit), "transfer" (either direction, already
+// signed - a negative amount here is a transfer OUT), and "expense"
+// (always negative - the shadow entry ExpenseContext.syncShadowExpenseEntry
+// auto-generates for a transaction linked via "Paid From", see
+// linked-transactions-plan.md) are different *meanings* (see the file
+// header) but the same *mechanic* for the units-held walk below. Kept
+// separate from getIncomeEntries, which callers outside this file (the
+// income-vs-expense dashboard reporting in particular) rely on meaning
+// literally "income" - a currency conversion, a transfer between your own
+// accounts, or a linked transaction's spend isn't income and must not be
+// counted as some in that reporting (nor would a linked transaction's
+// amount be double-counted as an "expense" there either - that reporting
+// reads straight from the transactions hierarchy already, not from here).
+const getInflowEntries = (entries, accountId) =>
+  getAccountEntriesSorted(entries, accountId).filter(
+    (e) => e.type === "income" || e.type === "convert" || e.type === "transfer" || e.type === "expense"
+  );
+
 // The most recent reconciliation at or before `asOfDate` - the "ground
 // truth" figure that every balance calculation builds forward from.
 // Returns null if the account has no reconciliation yet (shouldn't
@@ -59,13 +107,13 @@ export function getAnchor(entries, accountId, asOfDate) {
   return anchor;
 }
 
-// Sum of income entries strictly after `anchor` (by the same
-// chronological+id ordering) and at or before `asOfDate`.
-const sumIncomeSinceAnchor = (entries, accountId, anchor, asOfDate) => {
+// Sum of unit-inflow entries (income or convert) strictly after `anchor`
+// (by the same chronological+id ordering) and at or before `asOfDate`.
+const sumInflowSinceAnchor = (entries, accountId, anchor, asOfDate) => {
   const asOfTs = toDayTimestamp(asOfDate);
   const anchorTs = toDayTimestamp(anchor.date);
 
-  return getIncomeEntries(entries, accountId)
+  return getInflowEntries(entries, accountId)
     .filter((e) => {
       const eTs = toDayTimestamp(e.date);
       if (eTs !== anchorTs) return eTs > anchorTs && eTs <= asOfTs;
@@ -74,12 +122,13 @@ const sumIncomeSinceAnchor = (entries, accountId, anchor, asOfDate) => {
     .reduce((sum, e) => sum + Number(e.amount || 0), 0);
 };
 
-// Balance(X) = anchor.balance + income logged since the anchor, up to X.
-// Returns null if there's no reconciliation to anchor from at all.
+// Balance(X) = anchor.balance + units logged (income or convert) since the
+// anchor, up to X. Returns null if there's no reconciliation to anchor
+// from at all.
 export function getBalanceAsOf(entries, accountId, asOfDate) {
   const anchor = getAnchor(entries, accountId, asOfDate);
   if (!anchor) return null;
-  return anchor.balance + sumIncomeSinceAnchor(entries, accountId, anchor, asOfDate);
+  return anchor.balance + sumInflowSinceAnchor(entries, accountId, anchor, asOfDate);
 }
 
 // "Current balance" - if the anchor is stale, this is a projection
@@ -91,7 +140,108 @@ export function getCurrentBalance(entries, accountId, now = new Date()) {
 }
 
 export function getTotalBalance(accounts, entries, now = new Date()) {
-  return accounts.reduce((sum, acc) => sum + (getCurrentBalance(entries, acc.id, now) || 0), 0);
+  return accounts.reduce((sum, acc) => sum + (getCurrentValuePhp(entries, accounts, acc.id, now) || 0), 0);
+}
+
+// Most recent of (an explicit markPrice entry, the rate implied by the
+// most recent convert entry: costBasis / units) at or before asOfDate -
+// see foreign-assets-plan.md §2.2. Returns null if neither exists yet.
+// This is deliberately "whichever is more recent", not "prefer markPrice"
+// - every conversion already tells the system the rate at that moment, so
+// you only need to explicitly Update Price on days you're checking
+// valuation without actually transacting.
+export function getLatestPrice(entries, accountId, asOfDate = new Date()) {
+  const asOfTs = toDayTimestamp(asOfDate);
+
+  const candidates = getAccountEntriesSorted(entries, accountId).filter(
+    (e) => (e.type === "markPrice" || e.type === "convert") && toDayTimestamp(e.date) <= asOfTs
+  );
+  if (candidates.length === 0) return null;
+
+  const latest = candidates[candidates.length - 1]; // chronological order preserved by filter
+  if (latest.type === "markPrice") return latest.pricePerUnit ?? null;
+  return latest.amount ? latest.costBasis / latest.amount : null;
+}
+
+// The dollar-cost average itself, in the account's own cost currency -
+// deliberately NOT converted to PHP (see foreign-assets-plan.md §1/§3 on
+// why blending currency movement into an asset's own cost would
+// misrepresent both). sum(costBasis across convert entries) / sum(their
+// units). Returns null if the account has no convert entries yet.
+export function getAverageCost(entries, accountId) {
+  const converts = getConvertEntries(entries, accountId);
+  const totalUnits = converts.reduce((s, e) => s + Number(e.amount || 0), 0);
+  if (!totalUnits) return null;
+  const totalCost = converts.reduce((s, e) => s + Number(e.costBasis || 0), 0);
+  return totalCost / totalUnits;
+}
+
+// units held x latest price, in the account's own cost currency. Null
+// propagates rather than defaulting to 0 - "unknown" and "worthless" are
+// different things.
+export function getValueInCostCurrency(entries, accountId, asOfDate = new Date()) {
+  const units = getCurrentBalance(entries, accountId, asOfDate);
+  if (units == null) return null;
+  const price = getLatestPrice(entries, accountId, asOfDate);
+  if (price == null) return null;
+  return units * price;
+}
+
+// The chained PHP-equivalent value of ANY account, at ANY depth:
+// - unit == null                    -> already PHP, return raw balance.
+// - costCurrencyAccountId == null   -> one hop, priced directly in PHP.
+// - costCurrencyAccountId set       -> recurse into the referenced
+//   account to find "PHP per unit of its currency" (its own PHP value
+//   divided by its own units held), then multiply through. This is what
+//   makes a stock priced in USD, priced in turn against PHP, resolve
+//   correctly without hardcoding two hops specifically - a third hop
+//   would work the same way, though nothing in this app needs one yet.
+// `_visited` is an internal cycle guard - creation-time validation should
+// already prevent a cycle from ever being stored, but this never trusts
+// stored data blindly rather than risking infinite recursion.
+export function getCurrentValuePhp(entries, accounts, accountId, asOfDate = new Date(), _visited = new Set()) {
+  const account = accounts.find((a) => a.id === accountId);
+  if (!account || account.unit == null) {
+    return getCurrentBalance(entries, accountId, asOfDate);
+  }
+
+  if (_visited.has(accountId)) return null; // cycle guard
+  const visited = new Set(_visited);
+  visited.add(accountId);
+
+  const valueInCostCurrency = getValueInCostCurrency(entries, accountId, asOfDate);
+  if (valueInCostCurrency == null) return null;
+
+  if (account.costCurrencyAccountId == null) return valueInCostCurrency; // already PHP
+
+  const refAccount = accounts.find((a) => a.id === account.costCurrencyAccountId);
+  if (!refAccount) return null;
+
+  const refUnits = getCurrentBalance(entries, refAccount.id, asOfDate);
+  if (!refUnits) return null;
+
+  const refValuePhp = getCurrentValuePhp(entries, accounts, refAccount.id, asOfDate, visited);
+  if (refValuePhp == null) return null;
+
+  const rate = refValuePhp / refUnits; // PHP per unit of the referenced account's currency
+  return valueInCostCurrency * rate;
+}
+
+// Gain/loss in the account's own cost currency (never PHP-translated - see
+// getAverageCost). Returns null until both a convert entry and a price
+// exist. `pct` is null rather than a divide-by-zero if cost basis is 0.
+export function getUnrealizedGainLoss(entries, accountId) {
+  const units = getCurrentBalance(entries, accountId);
+  const avgCost = getAverageCost(entries, accountId);
+  const currentValue = getValueInCostCurrency(entries, accountId);
+
+  if (units == null || avgCost == null || currentValue == null) return null;
+
+  const totalCostBasis = avgCost * units;
+  const gainLoss = currentValue - totalCostBasis;
+  const pct = totalCostBasis ? (gainLoss / Math.abs(totalCostBasis)) * 100 : null;
+
+  return { gainLoss, pct, currentValue, totalCostBasis };
 }
 
 // One point per trailing month (default 12), each the total balance as of
@@ -114,8 +264,12 @@ export function buildMonthlyNetWorth(accounts, entries, monthsBack = 12, endDate
 
 // One row per gap between two consecutive reconciliations on the same
 // account. `impliedSpend` > 0 means the account lost more than its logged
-// income accounts for (untracked spend); < 0 means it gained more (missed
-// income log, interest, etc.) - see accounts-feature-plan-v2.md §1.3/§3.
+// inflow (income, convert, transfer, linked transactions) accounts for
+// (untracked spend); < 0 means it gained more (missed income log,
+// interest, etc.) - see accounts-feature-plan-v2.md §1.3/§3. Transfers
+// between your own accounts, and transactions explicitly linked via "Paid
+// From", are already folded into `incomeInPeriod` via getInflowEntries, so
+// neither ever shows up here as unexplained/mystery movement.
 export function getImpliedSpendPeriods(entries, accountId) {
   const reconciliations = getReconciliations(entries, accountId);
   const periods = [];
@@ -123,7 +277,7 @@ export function getImpliedSpendPeriods(entries, accountId) {
   for (let i = 0; i < reconciliations.length - 1; i++) {
     const from = reconciliations[i];
     const to = reconciliations[i + 1];
-    const incomeInPeriod = sumIncomeSinceAnchor(entries, accountId, from, to.date);
+    const incomeInPeriod = sumInflowSinceAnchor(entries, accountId, from, to.date);
     const expected = from.balance + incomeInPeriod;
 
     periods.push({

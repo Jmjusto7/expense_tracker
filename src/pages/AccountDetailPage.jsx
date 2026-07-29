@@ -1,11 +1,15 @@
 import { useParams } from "react-router-dom";
 import { useState } from "react";
-import { Wallet, TrendingUp, Scale, Trash2 } from "lucide-react";
+import { Wallet, TrendingUp, Scale, Trash2, ArrowRightLeft, ArrowLeftRight } from "lucide-react";
 import { useExpenseContext } from "../context/ExpenseContext";
 import { formatCurrency } from "../utils/formatCurrency";
 import { formatDate } from "../utils/dateHelpers";
 import {
   getCurrentBalance,
+  getCurrentValuePhp,
+  getAverageCost,
+  getLatestPrice,
+  getUnrealizedGainLoss,
   daysSinceLastReconciliation,
   getImpliedSpendPeriods,
   getAccountEntriesSorted,
@@ -13,16 +17,25 @@ import {
 import AccountBalanceChart from "../components/AccountBalanceChart";
 import AddIncomeModal from "../components/AddIncomeModal";
 import ReconcileBalanceModal from "../components/ReconcileBalanceModal";
+import ConvertModal from "../components/ConvertModal";
+import UpdatePriceModal from "../components/UpdatePriceModal";
+import TransferModal from "../components/TransferModal";
 import ConfirmButton from "../components/ConfirmButton";
 import StatCard from "../components/StatCard";
 import Breadcrumbs from "../components/Breadcrumbs";
+
+const formatNumber = (n, maxFractionDigits = 2) =>
+  n == null ? "—" : n.toLocaleString(undefined, { maximumFractionDigits: maxFractionDigits });
 
 export default function AccountDetailPage() {
   const { accountId } = useParams();
   const { accounts, balanceEntries, removeBalanceEntry } = useExpenseContext();
 
   const [showAddIncome, setShowAddIncome] = useState(false);
+  const [showConvert, setShowConvert] = useState(false);
+  const [showUpdatePrice, setShowUpdatePrice] = useState(false);
   const [showReconcile, setShowReconcile] = useState(false);
+  const [showTransfer, setShowTransfer] = useState(false);
   const [deleteError, setDeleteError] = useState("");
 
   const numericId = Number(accountId);
@@ -36,15 +49,36 @@ export default function AccountDetailPage() {
     );
   }
 
+  const isForeign = account.unit != null;
+
+  const costCurrencyAccount = account.costCurrencyAccountId
+    ? accounts.find((a) => a.id === account.costCurrencyAccountId)
+    : null;
+  const costCurrencyLabel = costCurrencyAccount ? costCurrencyAccount.unit : "PHP";
+
   const currentBalance = getCurrentBalance(balanceEntries, numericId);
+  const phpValue = isForeign ? getCurrentValuePhp(balanceEntries, accounts, numericId) : currentBalance;
+
+  const avgCost = isForeign ? getAverageCost(balanceEntries, numericId) : null;
+  const currentPrice = isForeign ? getLatestPrice(balanceEntries, numericId) : null;
+  const gainLoss = isForeign ? getUnrealizedGainLoss(balanceEntries, numericId) : null;
+
   const staleDays = daysSinceLastReconciliation(balanceEntries, numericId);
   const periods = getImpliedSpendPeriods(balanceEntries, numericId);
   const lastPeriod = periods.length > 0 ? periods[periods.length - 1] : null;
 
-  // Most recent first, for the history table.
-  const entries = getAccountEntriesSorted(balanceEntries, numericId).slice().reverse();
+  // Most recent first, for the history table. Excludes "expense" - the
+  // shadow entry auto-generated for a transaction linked via "Paid From"
+  // (see ExpenseContext's syncShadowExpenseEntry) - since that spend is
+  // already visible on the Expenses tab; History stays limited to actions
+  // taken directly on this account (income, reconcile, convert, transfer,
+  // price updates).
+  const entries = getAccountEntriesSorted(balanceEntries, numericId)
+    .filter((e) => e.type !== "expense")
+    .slice()
+    .reverse();
 
-  const balanceColor = currentBalance != null && currentBalance < 0 ? "text-alert" : "text-ledger-dark";
+  const balanceColor = phpValue != null && phpValue < 0 ? "text-alert" : "text-ledger-dark";
 
   const handleDeleteEntry = async (entryId) => {
     setDeleteError("");
@@ -54,6 +88,51 @@ export default function AccountDetailPage() {
       setDeleteError(err.message || "Couldn't delete that entry.");
       setTimeout(() => setDeleteError(""), 6000);
     }
+  };
+
+  const typeLabel = (t) =>
+    t === "income"
+      ? "Income"
+      : t === "convert"
+        ? "Converted"
+        : t === "markPrice"
+          ? "Price Update"
+          : t === "transfer"
+            ? "Transfer"
+            : "Reconciled";
+
+  const typeBadgeClass = (t) => {
+    if (t === "markPrice" || t === "transfer") return "bg-surface-sunken text-ink-muted border-border";
+    if (t === "reconciliation") return "bg-travel-soft text-travel-dark border-travel/30";
+    return "bg-ledger-soft text-ledger-dark border-ledger/30"; // income / convert
+  };
+
+  const formatEntryValue = (e) => {
+    if (!isForeign) {
+      if (e.type === "income") return formatCurrency(e.amount);
+      if (e.type === "reconciliation") return formatCurrency(e.balance);
+      if (e.type === "transfer") return `${e.amount >= 0 ? "+" : ""}${formatCurrency(e.amount)}`;
+      return "—";
+    }
+    if (e.type === "convert") return `${formatNumber(e.amount, 4)} ${account.unit}`;
+    if (e.type === "reconciliation") return `${formatNumber(e.balance, 4)} ${account.unit}`;
+    if (e.type === "markPrice") return `${formatNumber(e.pricePerUnit, 4)} ${costCurrencyLabel}/${account.unit}`;
+    if (e.type === "transfer") return `${e.amount >= 0 ? "+" : ""}${formatNumber(e.amount, 4)} ${account.unit}`;
+    return "—";
+  };
+
+  const entrySupplementalNote = (e) => {
+    if (e.type === "convert") {
+      const parts = [`Cost: ${formatNumber(e.costBasis)} ${costCurrencyLabel}`];
+      if (e.fee) parts.push(`Fee: ${formatNumber(e.fee)} ${costCurrencyLabel}`);
+      return parts.join(" · ");
+    }
+    if (e.type === "transfer") {
+      const counterpart = accounts.find((a) => a.id === e.counterpartAccountId);
+      const name = counterpart?.name || "a deleted account";
+      return e.amount < 0 ? `→ ${name}` : `← ${name}`;
+    }
+    return null;
   };
 
   return (
@@ -66,9 +145,20 @@ export default function AccountDetailPage() {
           <h1 className="font-display text-2xl text-ink">{account.name}</h1>
         </div>
 
-        <div className={`money text-2xl font-bold mt-2 ${balanceColor}`}>
-          {currentBalance == null ? "—" : formatCurrency(currentBalance)}
-        </div>
+        {isForeign ? (
+          <>
+            <div className="money text-2xl font-bold mt-2 text-ink">
+              {currentBalance == null ? "—" : `${formatNumber(currentBalance, 4)} ${account.unit}`}
+            </div>
+            <div className={`money text-sm mt-0.5 ${balanceColor}`}>
+              {phpValue == null ? "≈ — (no price recorded yet)" : `≈ ${formatCurrency(phpValue)} today`}
+            </div>
+          </>
+        ) : (
+          <div className={`money text-2xl font-bold mt-2 ${balanceColor}`}>
+            {phpValue == null ? "—" : formatCurrency(phpValue)}
+          </div>
+        )}
 
         <div className="text-xs text-ink-muted mt-1">
           {staleDays === null
@@ -80,41 +170,115 @@ export default function AccountDetailPage() {
       </div>
 
       <div className="flex gap-2 mb-6">
+        {isForeign ? (
+          <>
+            <button
+              onClick={() => setShowConvert(true)}
+              className="flex items-center gap-2 bg-ledger hover:bg-ledger-dark text-white px-4 py-2 rounded-lg transition-colors text-sm font-medium"
+            >
+              <ArrowRightLeft size={15} />
+              Convert
+            </button>
+            <button
+              onClick={() => setShowUpdatePrice(true)}
+              className="flex items-center gap-2 border border-border hover:bg-surface-sunken text-ink px-4 py-2 rounded-lg transition-colors text-sm font-medium"
+            >
+              <TrendingUp size={15} />
+              Update Price
+            </button>
+            <button
+              onClick={() => setShowReconcile(true)}
+              className="flex items-center gap-2 border border-border hover:bg-surface-sunken text-ink px-4 py-2 rounded-lg transition-colors text-sm font-medium"
+            >
+              <Scale size={15} />
+              Reconcile Units
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              onClick={() => setShowAddIncome(true)}
+              className="flex items-center gap-2 bg-ledger hover:bg-ledger-dark text-white px-4 py-2 rounded-lg transition-colors text-sm font-medium"
+            >
+              <TrendingUp size={15} />
+              Add Income
+            </button>
+            <button
+              onClick={() => setShowReconcile(true)}
+              className="flex items-center gap-2 border border-border hover:bg-surface-sunken text-ink px-4 py-2 rounded-lg transition-colors text-sm font-medium"
+            >
+              <Scale size={15} />
+              Reconcile Balance
+            </button>
+          </>
+        )}
+
+        {/* Transfer applies equally to PHP and foreign accounts - moving
+            units to another account of the same currency/unit - so it
+            lives outside the isForeign branch above rather than being
+            duplicated in both. */}
         <button
-          onClick={() => setShowAddIncome(true)}
-          className="flex items-center gap-2 bg-ledger hover:bg-ledger-dark text-white px-4 py-2 rounded-lg transition-colors text-sm font-medium"
-        >
-          <TrendingUp size={15} />
-          Add Income
-        </button>
-        <button
-          onClick={() => setShowReconcile(true)}
+          onClick={() => setShowTransfer(true)}
           className="flex items-center gap-2 border border-border hover:bg-surface-sunken text-ink px-4 py-2 rounded-lg transition-colors text-sm font-medium"
         >
-          <Scale size={15} />
-          Reconcile Balance
+          <ArrowLeftRight size={15} />
+          Transfer
         </button>
       </div>
+
+      {/* Average Cost / Current Price / Gain-Loss - foreign accounts only,
+          deliberately shown in the account's own cost currency, never
+          translated to PHP (see foreign-assets-plan.md §3). */}
+      {isForeign && (
+        <div className="grid sm:grid-cols-3 gap-4 mb-6">
+          <StatCard
+            label="Average Cost"
+            value={avgCost == null ? "—" : `${formatNumber(avgCost, 4)} ${costCurrencyLabel}/${account.unit}`}
+          />
+          <StatCard
+            label="Current Price"
+            value={currentPrice == null ? "—" : `${formatNumber(currentPrice, 4)} ${costCurrencyLabel}/${account.unit}`}
+          />
+          <StatCard
+            label="Gain / Loss"
+            value={
+              gainLoss == null
+                ? "—"
+                : `${gainLoss.gainLoss >= 0 ? "+" : ""}${formatNumber(gainLoss.gainLoss)} ${costCurrencyLabel}`
+            }
+            sublabel={gainLoss?.pct != null ? `${gainLoss.pct >= 0 ? "+" : ""}${gainLoss.pct.toFixed(1)}%` : "In " + costCurrencyLabel + ", not PHP"}
+            accent={gainLoss && gainLoss.gainLoss < 0 ? "alert" : "ledger"}
+          />
+        </div>
+      )}
 
       {lastPeriod && (
         <div className="grid sm:grid-cols-2 gap-4 mb-6">
           <StatCard
             label={lastPeriod.impliedSpend < 0 ? "Unaccounted Inflow (last period)" : "Implied Spend (last period)"}
-            value={formatCurrency(Math.abs(lastPeriod.impliedSpend))}
+            value={
+              isForeign
+                ? `${formatNumber(Math.abs(lastPeriod.impliedSpend), 4)} ${account.unit}`
+                : formatCurrency(Math.abs(lastPeriod.impliedSpend))
+            }
             sublabel={`${formatDate(lastPeriod.fromDate)} – ${formatDate(lastPeriod.toDate)}`}
             accent={lastPeriod.impliedSpend < 0 ? "ledger" : "alert"}
           />
           <StatCard
-            label="Income (last period)"
-            value={formatCurrency(lastPeriod.incomeInPeriod)}
-            sublabel="Logged between those two reconciliations"
+            label={isForeign ? "Units Added (last period)" : "Inflow Logged (last period)"}
+            value={
+              isForeign
+                ? `${formatNumber(lastPeriod.incomeInPeriod, 4)} ${account.unit}`
+                : formatCurrency(lastPeriod.incomeInPeriod)
+            }
+            sublabel="Income + transfers in, between those two reconciliations"
           />
         </div>
       )}
 
       <div className="bg-surface rounded-lg border border-border p-6 mb-6">
         <div className="text-xs text-ink-muted uppercase tracking-wide mb-3">
-          Balance Over Time
+          {isForeign ? "Units Over Time" : "Balance Over Time"}
         </div>
         <AccountBalanceChart entries={balanceEntries} accountId={numericId} />
       </div>
@@ -133,9 +297,9 @@ export default function AccountDetailPage() {
             <tr className="bg-surface-sunken text-ink-muted text-xs uppercase tracking-wide">
               <th className="border border-border px-3 py-2 font-medium">Date</th>
               <th className="border border-border px-3 py-2 font-medium">Type</th>
-              <th className="border border-border px-3 py-2 font-medium">Category</th>
+              {!isForeign && <th className="border border-border px-3 py-2 font-medium">Category</th>}
               <th className="border border-border px-3 py-2 text-right font-medium">
-                Amount / Balance
+                {isForeign ? "Units / Price" : "Amount / Balance"}
               </th>
               <th className="border border-border px-3 py-2 font-medium">Comments</th>
               <th className="border border-border px-3 py-2 w-[40px]"></th>
@@ -149,23 +313,20 @@ export default function AccountDetailPage() {
                   {formatDate(e.date)}
                 </td>
                 <td className="border border-border px-3 py-2">
-                  <span
-                    className={`text-xs px-2 py-0.5 rounded-full border ${
-                      e.type === "income"
-                        ? "bg-ledger-soft text-ledger-dark border-ledger/30"
-                        : "bg-travel-soft text-travel-dark border-travel/30"
-                    }`}
-                  >
-                    {e.type === "income" ? "Income" : "Reconciled"}
+                  <span className={`text-xs px-2 py-0.5 rounded-full border ${typeBadgeClass(e.type)}`}>
+                    {typeLabel(e.type)}
                   </span>
                 </td>
-                <td className="border border-border px-3 py-2 text-ink">
-                  {e.category || "—"}
-                </td>
+                {!isForeign && (
+                  <td className="border border-border px-3 py-2 text-ink">{e.category || "—"}</td>
+                )}
                 <td className="money border border-border px-3 py-2 text-right font-semibold text-ink">
-                  {formatCurrency(e.type === "income" ? e.amount : e.balance)}
+                  {formatEntryValue(e)}
                 </td>
                 <td className="border border-border px-3 py-2 text-ink-muted">
+                  {entrySupplementalNote(e) && (
+                    <div className="text-xs text-ink-muted/80">{entrySupplementalNote(e)}</div>
+                  )}
                   {e.comments}
                 </td>
                 <td className="border border-border px-2 py-2 text-center">
@@ -174,7 +335,7 @@ export default function AccountDetailPage() {
                     className="text-ink-muted hover:text-alert p-1"
                     confirmClassName="text-alert text-xs font-medium px-1"
                     confirmLabel="Sure?"
-                    title="Delete this entry"
+                    title={e.type === "transfer" ? "Delete this transfer? Removes both sides." : "Delete this entry"}
                   >
                     <Trash2 size={14} />
                   </ConfirmButton>
@@ -193,8 +354,20 @@ export default function AccountDetailPage() {
         <AddIncomeModal accountId={numericId} onClose={() => setShowAddIncome(false)} />
       )}
 
+      {showConvert && (
+        <ConvertModal accountId={numericId} onClose={() => setShowConvert(false)} />
+      )}
+
+      {showUpdatePrice && (
+        <UpdatePriceModal accountId={numericId} onClose={() => setShowUpdatePrice(false)} />
+      )}
+
       {showReconcile && (
         <ReconcileBalanceModal accountId={numericId} onClose={() => setShowReconcile(false)} />
+      )}
+
+      {showTransfer && (
+        <TransferModal accountId={numericId} onClose={() => setShowTransfer(false)} />
       )}
     </div>
   );

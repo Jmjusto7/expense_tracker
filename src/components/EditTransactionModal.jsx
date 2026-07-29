@@ -5,6 +5,7 @@ import { parseAmountExpression } from "../utils/amountHelpers";
 import { useInlineAddTravel } from "../hooks/useInlineAddTravel";
 import CategoryAutocompleteInput from "./transaction-row/CategoryAutocompleteInput";
 import TravelSelectCell from "./transaction-row/TravelSelectCell";
+import AccountSelectCell from "./transaction-row/AccountSelectCell";
 
 const generateRowId = () => Date.now() + Math.floor(Math.random() * 1000);
 
@@ -14,6 +15,7 @@ const blankRow = () => ({
   amount: "",
   comments: "",
   travelId: "",
+  accountId: null,
   isNew: true,
 });
 
@@ -27,6 +29,7 @@ export default function EditTransactionModal({ year, month, day, dayId, transact
     getMonthId,
     travels,
     categories,
+    accounts,
   } = useExpenseContext();
 
   const [rows, setRows] = useState([]);
@@ -43,6 +46,7 @@ export default function EditTransactionModal({ year, month, day, dayId, transact
             amount: t.amountBreakdown?.join(", ") || t.amount?.toString() || "",
             comments: t.comments || "",
             travelId: t.travelId || "",
+            accountId: t.accountId ?? null,
             isNew: !t.id,
           }))
         : [blankRow()]
@@ -98,6 +102,7 @@ export default function EditTransactionModal({ year, month, day, dayId, transact
           amountBreakdown: breakdown,
           comments: r.comments.trim(),
           travelId: r.travelId || null,
+          accountId: r.accountId || null,
         };
 
         if (r.isNew) {
@@ -134,10 +139,11 @@ export default function EditTransactionModal({ year, month, day, dayId, transact
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-surface-sunken text-ink-muted text-xs uppercase tracking-wide">
-                  <th className="border border-border px-3 py-2 w-[20%] font-medium">Category</th>
-                  <th className="border border-border px-3 py-2 w-[20%] font-medium">Amount (comma-separated)</th>
-                  <th className="border border-border px-3 py-2 w-[20%] font-medium">Travel</th>
-                  <th className="border border-border px-3 py-2 w-[35%] font-medium">Comments</th>
+                  <th className="border border-border px-3 py-2 w-[16%] font-medium">Category</th>
+                  <th className="border border-border px-3 py-2 w-[16%] font-medium">Amount (comma-separated)</th>
+                  <th className="border border-border px-3 py-2 w-[16%] font-medium">Travel</th>
+                  <th className="border border-border px-3 py-2 w-[16%] font-medium">Paid From</th>
+                  <th className="border border-border px-3 py-2 w-[31%] font-medium">Comments</th>
                   <th className="border border-border px-3 py-2 w-[5%] font-medium">Remove</th>
                 </tr>
               </thead>
@@ -174,6 +180,15 @@ export default function EditTransactionModal({ year, month, day, dayId, transact
                         onChange={(val) => updateRow(r.id, "travelId", val)}
                         onRequestAdd={() => requestAddTravel(r.id)}
                         travels={travels}
+                      />
+                    </td>
+
+                    {/* PAID FROM (ACCOUNT) SELECT */}
+                    <td className="border border-border px-3 py-2">
+                      <AccountSelectCell
+                        value={r.accountId}
+                        onChange={(val) => updateRow(r.id, "accountId", val)}
+                        accounts={accounts}
                       />
                     </td>
 

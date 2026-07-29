@@ -13,6 +13,7 @@ import { formatCurrency } from "../utils/formatCurrency";
 import { formatDate } from "../utils/dateHelpers";
 import {
   getCurrentBalance,
+  getCurrentValuePhp,
   daysSinceLastReconciliation,
   getTotalBalance,
   getImpliedSpendPeriods,
@@ -120,9 +121,11 @@ export default function AccountsPage() {
 
       <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
         {accounts?.map((account) => {
+          const isForeign = account.unit != null;
           const balance = getCurrentBalance(balanceEntries, account.id);
+          const phpValue = isForeign ? getCurrentValuePhp(balanceEntries, accounts, account.id) : balance;
           const staleDays = daysSinceLastReconciliation(balanceEntries, account.id);
-          const balanceColor = balance != null && balance < 0 ? "text-alert" : "text-ledger-dark";
+          const balanceColor = phpValue != null && phpValue < 0 ? "text-alert" : "text-ledger-dark";
           const typeName = account.typeId != null
             ? accountTypes.find((t) => t.id === account.typeId)?.name
             : null;
@@ -178,9 +181,20 @@ export default function AccountsPage() {
               </div>
 
               {/* Balance */}
-              <div className={`money text-xl font-bold mb-1 ${balanceColor}`}>
-                {balance == null ? "—" : formatCurrency(balance)}
-              </div>
+              {isForeign ? (
+                <>
+                  <div className="money text-xl font-bold mb-0.5 text-ink">
+                    {balance == null ? "—" : `${balance.toLocaleString(undefined, { maximumFractionDigits: 4 })} ${account.unit}`}
+                  </div>
+                  <div className={`money text-sm mb-1 ${balanceColor}`}>
+                    {phpValue == null ? "≈ — (no price yet)" : `≈ ${formatCurrency(phpValue)}`}
+                  </div>
+                </>
+              ) : (
+                <div className={`money text-xl font-bold mb-1 ${balanceColor}`}>
+                  {phpValue == null ? "—" : formatCurrency(phpValue)}
+                </div>
+              )}
 
               {/* Staleness */}
               <div className="text-xs text-ink-muted">

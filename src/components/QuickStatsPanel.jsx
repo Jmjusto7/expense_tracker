@@ -1,9 +1,13 @@
 import { formatCurrency } from "../utils/formatCurrency";
 import { formatDate } from "../utils/dateHelpers";
 
-function StatRow({ label, primary, secondary, tertiary }) {
+function StatRow({ label, primary, secondary, tertiary, borderRight = false, borderBottom = false }) {
   return (
-    <div className="flex-1 flex flex-col justify-center px-4 py-2 border-b border-border last:border-b-0 min-h-0">
+    <div
+      className={`flex flex-col justify-center px-3 py-2.5 border-border ${borderRight ? "border-r" : ""} ${
+        borderBottom ? "border-b" : ""
+      }`}
+    >
       <div className="text-[11px] text-ink-muted uppercase tracking-wide mb-1">{label}</div>
       <div className="text-xl font-bold text-ink leading-none truncate">{primary}</div>
       {secondary && <div className="text-xs text-ink-muted mt-1 truncate">{secondary}</div>}
@@ -26,11 +30,13 @@ export default function QuickStatsPanel({
   daysLeftInMonth,
 }) {
   return (
-    <div className="h-full bg-surface border border-border rounded-xl flex flex-col overflow-hidden">
+    <div className="h-full bg-surface border border-border rounded-xl grid grid-cols-2 overflow-y-auto">
       <StatRow
         label="Savings Rate"
         primary={savingsRatePct === null ? "—" : `${savingsRatePct.toFixed(1)}%`}
         secondary="of income"
+        borderRight
+        borderBottom
       />
 
       <StatRow
@@ -38,6 +44,7 @@ export default function QuickStatsPanel({
         primary={<span className="money">{largestExpense ? formatCurrency(largestExpense.amount) : "—"}</span>}
         secondary={largestExpense?.category}
         tertiary={largestExpense?.date ? formatDate(largestExpense.date) : undefined}
+        borderBottom
       />
 
       <StatRow
@@ -45,6 +52,8 @@ export default function QuickStatsPanel({
         primary={topCategory?.name || "—"}
         secondary={topCategory && <span className="money">{formatCurrency(topCategory.amount)}</span>}
         tertiary={topCategory ? `${topCategory.pct.toFixed(1)}% of total expenses` : undefined}
+        borderRight
+        borderBottom
       />
 
       <StatRow
@@ -56,6 +65,7 @@ export default function QuickStatsPanel({
             ? undefined
             : `${transactionCountDelta >= 0 ? "+" : ""}${transactionCountDelta} vs last month`
         }
+        borderBottom
       />
 
       <StatRow label="Days Left in Month" primary={daysLeftInMonth} />

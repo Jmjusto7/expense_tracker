@@ -5,7 +5,12 @@ import { getBalanceAsOf } from "../utils/balanceHelpers";
 import { formatCurrency } from "../utils/formatCurrency";
 
 export default function ReconcileBalanceModal({ accountId, onClose }) {
-  const { balanceEntries, addReconciliation } = useExpenseContext();
+  const { accounts, balanceEntries, addReconciliation } = useExpenseContext();
+  const account = accounts.find((a) => a.id === accountId);
+  const isForeign = account?.unit != null;
+
+  const formatValue = (n) =>
+    isForeign ? `${n.toLocaleString(undefined, { maximumFractionDigits: 4 })} ${account.unit}` : formatCurrency(n);
 
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [actualBalance, setActualBalance] = useState("");
@@ -13,9 +18,9 @@ export default function ReconcileBalanceModal({ accountId, onClose }) {
   const [error, setError] = useState("");
 
   // "Book" balance as of the date being reconciled - computed live from
-  // whatever's already logged (anchor reconciliation + income since). This
-  // is never stored; it's purely a preview so the delta below is
-  // self-documenting rather than a bare number entry.
+  // whatever's already logged (anchor reconciliation + income/conversions
+  // since). This is never stored; it's purely a preview so the delta below
+  // is self-documenting rather than a bare number entry.
   const bookBalance = useMemo(() => {
     if (!date) return null;
     return getBalanceAsOf(balanceEntries, accountId, new Date(date));
@@ -30,7 +35,7 @@ export default function ReconcileBalanceModal({ accountId, onClose }) {
   const handleSave = async () => {
     if (!date) return setError("Please pick a date.");
     if (actualBalance === "" || isNaN(Number(actualBalance)))
-      return setError("Please enter the actual balance you see.");
+      return setError(isForeign ? "Please enter the actual units you hold." : "Please enter the actual balance you see.");
 
     try {
       await addReconciliation(accountId, {
@@ -57,7 +62,7 @@ export default function ReconcileBalanceModal({ accountId, onClose }) {
 
         <div className="flex items-center gap-2 mb-4">
           <Scale size={18} className="text-ledger-dark" />
-          <h2 className="font-display text-xl text-ink">Reconcile Balance</h2>
+          <h2 className="font-display text-xl text-ink">{isForeign ? "Reconcile Units" : "Reconcile Balance"}</h2>
         </div>
 
         <div className="flex flex-col gap-4">
@@ -73,23 +78,23 @@ export default function ReconcileBalanceModal({ accountId, onClose }) {
 
           <div className="bg-surface-sunken rounded-md px-3 py-2 flex justify-between items-center">
             <span className="text-sm text-ink-muted">
-              Book balance (income logged so far)
+              {isForeign ? "Book units (logged so far)" : "Book balance (income logged so far)"}
             </span>
             <span className="money text-sm font-semibold text-ink">
-              {bookBalance === null ? "—" : formatCurrency(bookBalance)}
+              {bookBalance === null ? "—" : formatValue(bookBalance)}
             </span>
           </div>
 
           <div>
             <label className="block text-sm font-medium text-ink-muted mb-1">
-              What does your account actually show?
+              {isForeign ? "How many units do you actually hold?" : "What does your account actually show?"}
             </label>
             <input
               type="text"
               value={actualBalance}
               onChange={(e) => setActualBalance(e.target.value)}
               className="money w-full border border-border rounded-md px-3 py-2 text-ink bg-surface focus:ring-2 focus:ring-ledger focus:outline-none"
-              placeholder="e.g. 18000"
+              placeholder={isForeign ? "e.g. 1000" : "e.g. 18000"}
             />
           </div>
 
@@ -104,9 +109,9 @@ export default function ReconcileBalanceModal({ accountId, onClose }) {
               }`}
             >
               {delta < 0 &&
-                `Implied spend since last reconciliation: ${formatCurrency(Math.abs(delta))}`}
+                `${isForeign ? "Unaccounted decrease" : "Implied spend"} since last reconciliation: ${formatValue(Math.abs(delta))}`}
               {delta > 0 &&
-                `Unaccounted inflow since last reconciliation: ${formatCurrency(delta)}`}
+                `Unaccounted inflow since last reconciliation: ${formatValue(delta)}`}
               {delta === 0 && "Matches the book balance exactly - no gap."}
             </div>
           )}
@@ -120,7 +125,7 @@ export default function ReconcileBalanceModal({ accountId, onClose }) {
               value={comments}
               onChange={(e) => setComments(e.target.value)}
               className="w-full border border-border rounded-md px-3 py-2 text-sm bg-surface text-ink focus:ring-2 focus:ring-ledger focus:outline-none"
-              placeholder="e.g. Bank fee, interest, cash withdrawal"
+              placeholder={isForeign ? "e.g. Stock split, unrecorded sale" : "e.g. Bank fee, interest, cash withdrawal"}
             />
           </div>
 
