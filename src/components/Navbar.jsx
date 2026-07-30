@@ -1,6 +1,6 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import { createPortal } from "react-dom";
-import { Home, Receipt, Plane, Settings, Download, Upload, Plus, Wallet } from "lucide-react";
+import { Home, Receipt, Plane, Settings, Download, Upload, Plus, Wallet, CreditCard } from "lucide-react";
 import { useState } from "react";
 import { useExpenseContext } from "../context/ExpenseContext";
 import AddTransactionModal from "./AddTransactionModal";
@@ -114,6 +114,10 @@ export default function Navbar() {
             <NavLink to="/assets" className={navLinkClass}>
               <Wallet size={15} />
               <span className="hidden sm:inline">Assets</span>
+            </NavLink>
+            <NavLink to="/liabilities" className={navLinkClass}>
+              <CreditCard size={15} />
+              <span className="hidden sm:inline">Liabilities</span>
             </NavLink>
           </nav>
         </div>

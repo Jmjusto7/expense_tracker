@@ -2,7 +2,7 @@ import { useParams } from "react-router-dom";
 import { useState, useMemo } from "react";
 import { useExpenseContext } from "../context/ExpenseContext";
 import { Plane, ChevronRight, X } from "lucide-react";
-import { formatDate } from "../utils/dateHelpers";
+import { formatDate, ALL_MONTHS, formatWeekday } from "../utils/dateHelpers";
 import { formatCurrency, formatCurrencyPrecise } from "../utils/formatCurrency";
 import { filterTransactionsByTravel, sumAmounts, findTravelById } from "../utils/travelHelpers";
 import { useBucketsWithCategories } from "../hooks/useBucketsWithCategories";
@@ -120,6 +120,28 @@ export default function TravelDetailPage() {
     setSelectedCategory(null);
   };
 
+  // Groups visibleTransactions into day buckets - chronological, earliest
+  // first, so the list reads like a trip itinerary rather than an
+  // arbitrary flat log. Each group carries a resolved Date (for the
+  // weekday badge) and its own subtotal, mirroring ExpensesPage's
+  // per-day card pattern one level down at the transaction-log level.
+  const transactionsByDay = useMemo(() => {
+    const groups = new Map();
+
+    visibleTransactions.forEach((t) => {
+      const key = `${t.yearNumber}-${t.monthName}-${t.dayNumber}`;
+      if (!groups.has(key)) {
+        groups.set(key, {
+          date: new Date(t.yearNumber, ALL_MONTHS.indexOf(t.monthName), t.dayNumber),
+          transactions: [],
+        });
+      }
+      groups.get(key).transactions.push(t);
+    });
+
+    return [...groups.values()].sort((a, b) => a.date - b.date);
+  }, [visibleTransactions]);
+
   if (!travel) {
     return (
       <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8">
@@ -212,37 +234,42 @@ export default function TravelDetailPage() {
           )}
         </div>
 
-        <table className="w-full text-left border-collapse text-sm">
-          <thead>
-            <tr className="bg-surface-sunken text-ink-muted text-xs uppercase tracking-wide">
-              <th className="border border-border px-3 py-2 font-medium">Date</th>
-              <th className="border border-border px-3 py-2 font-medium">Category</th>
-              <th className="border border-border px-3 py-2 font-medium">Comments</th>
-              <th className="border border-border px-3 py-2 text-right font-medium">
-                Amount
-              </th>
-            </tr>
-          </thead>
+        {transactionsByDay.map(({ date, transactions: dayTransactions }) => (
+          <div
+            key={date.toISOString()}
+            className="border border-border rounded-lg overflow-hidden mb-3 last:mb-0"
+          >
+            {/* Day header: weekday badge + full date + day subtotal - the
+                visual break between days, replacing the old per-row date
+                column (redundant once every row in this block shares one
+                date). */}
+            <div className="flex items-center justify-between bg-surface-sunken px-3 py-2">
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-travel-soft text-travel-dark border border-travel/30 uppercase tracking-wide">
+                  {formatWeekday(date)}
+                </span>
+                <span className="text-sm font-semibold text-ink">{formatDate(date)}</span>
+              </div>
+              <span className="money text-sm font-semibold text-travel-dark">
+                {formatCurrency(sumAmounts(dayTransactions))}
+              </span>
+            </div>
 
-          <tbody>
-            {visibleTransactions.map((t) => (
-              <tr key={t.id}>
-                <td className="border border-border px-3 py-2 text-ink-muted">
-                  {t.monthName} {t.dayNumber}, {t.yearNumber}
-                </td>
-                <td className="border border-border px-3 py-2 text-ink">
-                  {t.category}
-                </td>
-                <td className="border border-border px-3 py-2 text-ink-muted">
-                  {t.comments}
-                </td>
-                <td className="money border border-border px-3 py-2 text-right font-semibold text-travel-dark">
-                  {formatCurrency(t.amount)}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+            <table className="w-full text-left border-collapse text-sm">
+              <tbody>
+                {dayTransactions.map((t) => (
+                  <tr key={t.id}>
+                    <td className="border-t border-border px-3 py-2 text-ink w-[25%]">{t.category}</td>
+                    <td className="border-t border-border px-3 py-2 text-ink-muted">{t.comments}</td>
+                    <td className="money border-t border-border px-3 py-2 text-right font-semibold text-travel-dark w-[120px]">
+                      {formatCurrency(t.amount)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ))}
 
         {visibleTransactions.length === 0 && (
           <p className="text-ink-muted text-sm text-center py-6">No transactions in this scope.</p>

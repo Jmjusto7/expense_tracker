@@ -312,3 +312,112 @@ export function isOldestReconciliation(entries, accountId, entryId) {
   const reconciliations = getReconciliations(entries, accountId);
   return reconciliations.length > 0 && reconciliations[0].id === entryId;
 }
+
+// ----------------------------------------------------------------------
+// Liabilities (credit cards, etc - see liability-plan.md). A liability is
+// just an `accounts` row with isLiability true and a balance that's
+// expected to sit at or below zero (0 = paid off, more negative = owe
+// more) - every function above this line already works correctly for one
+// unmodified, since a linked purchase already subtracts via
+// syncShadowExpenseEntry, a Transfer-in payment already adds via
+// addTransfer, and getTotalBalance already nets it into net worth. Only
+// statement-cycle bookkeeping is genuinely new.
+// ----------------------------------------------------------------------
+
+// Statement-close entries mark where one billing cycle ends and the next
+// begins - a pure date marker, no amount. Logged explicitly by the user
+// each cycle (see ExpenseContext's addStatementClose) rather than
+// computed, since real-world cutoff dates shift by a day or more around
+// weekends/holidays in ways that vary by card issuer. Mirrors
+// getReconciliations exactly.
+export function getStatementCloseEntries(entries, accountId) {
+  return getAccountEntriesSorted(entries, accountId).filter((e) => e.type === "statementClose");
+}
+
+// Advisory only - a starting-point suggestion for the date field when
+// logging a new statement close (LogStatementCloseModal), never trusted
+// as the authoritative cutoff itself (that's whatever date the user
+// actually confirms - see getStatementCloseEntries). Just "this month's
+// expected cutoff day", clamped to the last day of short months.
+export function suggestNextCutoffDate(cutoffDay, today = new Date()) {
+  const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+  const clampedDay = Math.min(cutoffDay, daysInMonth);
+  return new Date(today.getFullYear(), today.getMonth(), clampedDay);
+}
+
+// Whether the statement that closed on `cutoffDate` has been fully paid
+// off - derived, never stored - plus `remainingDue`, a single signed
+// figure: positive = still owed, 0 = settled exactly, negative = a credit
+// (overpaid relative to what THIS statement billed - whether that credit
+// already existed at cutoff time or came from payments since exceeding
+// what was owed). New charges after the cutoff belong to the NEXT
+// statement and never affect this one either way - paying off exactly
+// what was billed reads remainingDue: 0 even if you've since spent again.
+export function getStatementPaymentStatus(entries, accountId, cutoffDate) {
+  const balanceAtCutoff = getBalanceAsOf(entries, accountId, cutoffDate);
+  if (balanceAtCutoff == null) return null;
+
+  const amountOwed = Math.max(-balanceAtCutoff, 0);
+  const cutoffTs = toDayTimestamp(cutoffDate);
+
+  const paidSinceCutoff = getInflowEntries(entries, accountId)
+    .filter((e) => toDayTimestamp(e.date) > cutoffTs && Number(e.amount || 0) > 0)
+    .reduce((sum, e) => sum + Number(e.amount || 0), 0);
+
+  const remainingDue = -balanceAtCutoff - paidSinceCutoff;
+
+  return { isPaid: remainingDue <= 0, amountOwed, paidSinceCutoff, remainingDue };
+}
+
+// Bundles everything LiabilityDetailPage needs into one call: Total
+// Balance (today, unbilled charges included), the most recently CLOSED
+// statement's balance/due-date/paid-status, and available credit. Returns
+// null statement fields rather than fabricating a cutoff when nothing's
+// been logged yet - "Not reconciled yet"'s sibling for statements.
+//
+// Nothing here prevents (or should prevent) overpayment - totalBalance can
+// go positive (0 = paid off, positive = the issuer owes YOU a credit
+// balance). availableCredit reflects that directly rather than clamping it
+// away: creditLimit + totalBalance is correct either way, since
+// totalBalance is already signed - owing 5000 against a 10000 limit gives
+// 5000 available; a 2000 overpayment gives 12000 available (full limit
+// plus the credit sitting there).
+export function getStatementInfo(entries, account, asOfDate = new Date()) {
+  const totalBalance = getCurrentBalance(entries, account.id, asOfDate);
+
+  const availableCredit =
+    account.creditLimit != null && totalBalance != null ? account.creditLimit + totalBalance : null;
+
+  const pastCloses = getStatementCloseEntries(entries, account.id).filter(
+    (e) => toDayTimestamp(e.date) <= toDayTimestamp(asOfDate)
+  );
+  const lastClose = pastCloses.length > 0 ? pastCloses[pastCloses.length - 1] : null;
+
+  if (!lastClose) {
+    return {
+      totalBalance,
+      availableCredit,
+      cutoffDate: null,
+      statementBalance: null,
+      dueDate: null,
+      isPaid: null,
+      remainingDue: null,
+    };
+  }
+
+  const statementBalance = getBalanceAsOf(entries, account.id, lastClose.date);
+  const dueDate = new Date(lastClose.date);
+  dueDate.setDate(dueDate.getDate() + (account.dueDateOffsetDays || 0));
+
+  const paymentStatus = getStatementPaymentStatus(entries, account.id, lastClose.date);
+
+  return {
+    totalBalance,
+    availableCredit,
+    cutoffDate: lastClose.date,
+    statementBalance,
+    dueDate,
+    isPaid: paymentStatus?.isPaid ?? null,
+    remainingDue: paymentStatus?.remainingDue ?? null,
+  };
+}

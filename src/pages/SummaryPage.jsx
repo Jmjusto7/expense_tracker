@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Bell } from "lucide-react";
 import { useExpenseContext } from "../context/ExpenseContext";
 import { ALL_MONTHS, formatDate } from "../utils/dateHelpers";
-import { daysSinceLastReconciliation } from "../utils/balanceHelpers";
+import { daysSinceLastReconciliation, getStatementInfo } from "../utils/balanceHelpers";
 import { buildMonthlyIncomeExpense, findMonthRow } from "../utils/incomeExpenseHelpers";
 import NetWorthHeroCard from "../components/NetWorthHeroCard";
 import MonthSummaryCard from "../components/MonthSummaryCard";
@@ -92,10 +92,24 @@ const SummaryPage = () => {
   const transactionCount = thisMonthTx.length;
   const transactionCountDelta = transactionCount - lastMonthTx.length;
 
-  const daysLeftInMonth = useMemo(() => {
-    const daysInMonth = new Date(currentYear, today.getMonth() + 1, 0).getDate();
-    return daysInMonth - today.getDate();
-  }, [currentYear, today]);
+  // Sum of remainingDue (see getStatementInfo/getStatementPaymentStatus)
+  // across every liability whose most recent statement's due date falls
+  // in the current calendar month - one signed figure: positive = still
+  // owed somewhere this month, 0 = everything due this month is settled,
+  // negative = net overpaid/credit across what's due this month. A
+  // liability with no statement logged yet (no due date at all) doesn't
+  // contribute - there's nothing to be "due" without a real cutoff.
+  const liabilitiesDueThisMonth = useMemo(() => {
+    return accounts
+      .filter((a) => a.isLiability)
+      .reduce((sum, a) => {
+        const info = getStatementInfo(balanceEntries, a, today);
+        if (!info.dueDate) return sum;
+        const isDueThisMonth =
+          info.dueDate.getFullYear() === currentYear && info.dueDate.getMonth() === today.getMonth();
+        return isDueThisMonth ? sum + (info.remainingDue ?? 0) : sum;
+      }, 0);
+  }, [accounts, balanceEntries, currentYear, today]);
 
   // -------------------------
   // Notification bell - accounts overdue for reconciliation, the one
@@ -167,7 +181,7 @@ const SummaryPage = () => {
             topCategory={topCategory}
             transactionCount={transactionCount}
             transactionCountDelta={transactionCountDelta}
-            daysLeftInMonth={daysLeftInMonth}
+            liabilitiesDueThisMonth={liabilitiesDueThisMonth}
           />
         </div>
       </div>

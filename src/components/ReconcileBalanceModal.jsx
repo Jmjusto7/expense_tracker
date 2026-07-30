@@ -8,9 +8,17 @@ export default function ReconcileBalanceModal({ accountId, onClose }) {
   const { accounts, balanceEntries, addReconciliation } = useExpenseContext();
   const account = accounts.find((a) => a.id === accountId);
   const isForeign = account?.unit != null;
+  const isLiability = Boolean(account?.isLiability);
 
   const formatValue = (n) =>
     isForeign ? `${n.toLocaleString(undefined, { maximumFractionDigits: 4 })} ${account.unit}` : formatCurrency(n);
+
+  // Liability balances are stored negative internally (see db.js v8), but
+  // read naturally to a person as a positive "amount owed" - this is the
+  // one place that sign convention needs to be bridged, both for display
+  // and for what gets typed into the form.
+  const formatOwed = (n) => formatCurrency(Math.abs(n));
+  const displayValue = isLiability ? formatOwed : formatValue;
 
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [actualBalance, setActualBalance] = useState("");
@@ -27,20 +35,29 @@ export default function ReconcileBalanceModal({ accountId, onClose }) {
   }, [balanceEntries, accountId, date]);
 
   const actualNum = actualBalance === "" ? null : Number(actualBalance);
-  const delta =
-    actualNum !== null && !isNaN(actualNum) && bookBalance !== null
-      ? actualNum - bookBalance
-      : null;
+  // What the person types is always a signed "amount owed" - for a
+  // liability, negative means a credit balance (overpayment), matching
+  // the internal sign convention directly rather than forcing every entry
+  // into "owed" semantics (Math.abs would silently discard that).
+  const signedActual =
+    actualNum !== null && !isNaN(actualNum) ? (isLiability ? -actualNum : actualNum) : null;
+  const delta = signedActual !== null && bookBalance !== null ? signedActual - bookBalance : null;
 
   const handleSave = async () => {
     if (!date) return setError("Please pick a date.");
     if (actualBalance === "" || isNaN(Number(actualBalance)))
-      return setError(isForeign ? "Please enter the actual units you hold." : "Please enter the actual balance you see.");
+      return setError(
+        isLiability
+          ? "Please enter how much you currently owe (negative if you have a credit balance)."
+          : isForeign
+            ? "Please enter the actual units you hold."
+            : "Please enter the actual balance you see."
+      );
 
     try {
       await addReconciliation(accountId, {
         date,
-        balance: Number(actualBalance),
+        balance: isLiability ? -Number(actualBalance) : Number(actualBalance),
         comments: comments.trim(),
       });
       onClose();
@@ -61,8 +78,10 @@ export default function ReconcileBalanceModal({ accountId, onClose }) {
         </button>
 
         <div className="flex items-center gap-2 mb-4">
-          <Scale size={18} className="text-ledger-dark" />
-          <h2 className="font-display text-xl text-ink">{isForeign ? "Reconcile Units" : "Reconcile Balance"}</h2>
+          <Scale size={18} className={isLiability ? "text-alert" : "text-ledger-dark"} />
+          <h2 className="font-display text-xl text-ink">
+            {isLiability ? "Reconcile Amount Owed" : isForeign ? "Reconcile Units" : "Reconcile Balance"}
+          </h2>
         </div>
 
         <div className="flex flex-col gap-4">
@@ -78,23 +97,37 @@ export default function ReconcileBalanceModal({ accountId, onClose }) {
 
           <div className="bg-surface-sunken rounded-md px-3 py-2 flex justify-between items-center">
             <span className="text-sm text-ink-muted">
-              {isForeign ? "Book units (logged so far)" : "Book balance (income logged so far)"}
+              {isLiability
+                ? "Book amount owed (logged so far)"
+                : isForeign
+                  ? "Book units (logged so far)"
+                  : "Book balance (income logged so far)"}
             </span>
             <span className="money text-sm font-semibold text-ink">
-              {bookBalance === null ? "—" : formatValue(bookBalance)}
+              {bookBalance === null ? "—" : displayValue(bookBalance)}
             </span>
           </div>
 
           <div>
             <label className="block text-sm font-medium text-ink-muted mb-1">
-              {isForeign ? "How many units do you actually hold?" : "What does your account actually show?"}
+              {isLiability
+                ? "How much do you currently owe?"
+                : isForeign
+                  ? "How many units do you actually hold?"
+                  : "What does your account actually show?"}
             </label>
             <input
               type="text"
               value={actualBalance}
               onChange={(e) => setActualBalance(e.target.value)}
               className="money w-full border border-border rounded-md px-3 py-2 text-ink bg-surface focus:ring-2 focus:ring-ledger focus:outline-none"
-              placeholder={isForeign ? "e.g. 1000" : "e.g. 18000"}
+              placeholder={
+                isLiability
+                  ? "e.g. 15000, 0 if paid off, or -2000 if you have a credit balance"
+                  : isForeign
+                    ? "e.g. 1000"
+                    : "e.g. 18000"
+              }
             />
           </div>
 
@@ -109,9 +142,9 @@ export default function ReconcileBalanceModal({ accountId, onClose }) {
               }`}
             >
               {delta < 0 &&
-                `${isForeign ? "Unaccounted decrease" : "Implied spend"} since last reconciliation: ${formatValue(Math.abs(delta))}`}
+                `${isLiability ? "Unexplained additional charge" : isForeign ? "Unaccounted decrease" : "Implied spend"} since last reconciliation: ${displayValue(Math.abs(delta))}`}
               {delta > 0 &&
-                `Unaccounted inflow since last reconciliation: ${formatValue(delta)}`}
+                `${isLiability ? "Unaccounted payment/credit" : "Unaccounted inflow"} since last reconciliation: ${displayValue(Math.abs(delta))}`}
               {delta === 0 && "Matches the book balance exactly - no gap."}
             </div>
           )}
@@ -125,7 +158,13 @@ export default function ReconcileBalanceModal({ accountId, onClose }) {
               value={comments}
               onChange={(e) => setComments(e.target.value)}
               className="w-full border border-border rounded-md px-3 py-2 text-sm bg-surface text-ink focus:ring-2 focus:ring-ledger focus:outline-none"
-              placeholder={isForeign ? "e.g. Stock split, unrecorded sale" : "e.g. Bank fee, interest, cash withdrawal"}
+              placeholder={
+                isLiability
+                  ? "e.g. Interest charge, waived fee, untracked payment"
+                  : isForeign
+                    ? "e.g. Stock split, unrecorded sale"
+                    : "e.g. Bank fee, interest, cash withdrawal"
+              }
             />
           </div>
 

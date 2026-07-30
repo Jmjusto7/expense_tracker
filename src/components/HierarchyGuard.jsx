@@ -4,7 +4,7 @@ import { useExpenseContext } from "../context/ExpenseContext";
 
 export default function HierarchyGuard({ children }) {
   const navigate = useNavigate();
-  const { year: yearParam, month: monthParam, travelId, accountId } = useParams();
+  const { year: yearParam, month: monthParam, travelId, accountId, liabilityId } = useParams();
 
   const { years, travels, accounts } = useExpenseContext();
 
@@ -16,11 +16,33 @@ export default function HierarchyGuard({ children }) {
       if (!accounts) return; // wait for load
 
       const numericAccountId = Number(accountId);
+      const match = accounts.find((a) => a.id === numericAccountId);
 
-      const exists = accounts.some((a) => a.id === numericAccountId);
-
-      if (!exists) {
+      // A liability opened via /assets/:id (e.g. a stale bookmark from
+      // before it was marked a liability) belongs on its own page instead
+      // of silently rendering here.
+      if (!match) {
         navigate("/assets", { replace: true });
+      } else if (match.isLiability) {
+        navigate(`/liabilities/${numericAccountId}`, { replace: true });
+      }
+
+      return;
+    }
+
+    // =============================
+    // LIABILITY DETAIL VALIDATION
+    // =============================
+    if (liabilityId) {
+      if (!accounts) return; // wait for load
+
+      const numericLiabilityId = Number(liabilityId);
+      const match = accounts.find((a) => a.id === numericLiabilityId);
+
+      if (!match) {
+        navigate("/liabilities", { replace: true });
+      } else if (!match.isLiability) {
+        navigate(`/assets/${numericLiabilityId}`, { replace: true });
       }
 
       return;
@@ -75,7 +97,7 @@ export default function HierarchyGuard({ children }) {
         }
       }
     }
-  }, [years, travels, accounts, yearParam, monthParam, travelId, accountId, navigate]);
+  }, [years, travels, accounts, yearParam, monthParam, travelId, accountId, liabilityId, navigate]);
 
   return children;
 }

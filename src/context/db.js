@@ -138,3 +138,28 @@ db.version(8).stores({
   balanceEntries: "++id, accountId, date, type",
   accountTypes: "++id, name",
 });
+
+// Liabilities (see liability-plan.md): accounts gains four fields, all
+// unindexed like the account fields above - none of them are ever queried
+// by index, only read off rows already fetched by id, so no version bump.
+// - `isLiability`: bool, default false. Same `accounts` table as assets
+//   rather than a parallel table - deliberately, since almost every piece
+//   of balance math (getBalanceAsOf, addTransfer, syncShadowExpenseEntry)
+//   already works correctly for a liability with ZERO changes, as long as
+//   its balance is stored negative (0 = paid off, more negative = owe
+//   more) - a linked purchase already subtracts, a Transfer-in payment
+//   already adds, getTotalBalance already nets it into net worth for free.
+// - `creditLimit`: nullable number, plain mutable field (not a dated
+//   history - described as just "adjustable", not something needing a
+//   timeline the way price/balance do).
+// - `statementCutoffDay` / `dueDateOffsetDays`: advisory only. The actual
+//   cutoff date is a real dated fact the user logs each cycle (a new
+//   balanceEntries `type: "statementClose"`, a pure date marker with no
+//   amount - mirrors "reconciliation" in shape) rather than something
+//   computed, since real cutoff dates shift by a day or more around
+//   weekends/holidays in ways that vary by card issuer. statementCutoffDay
+//   is only used to prefill a suggested date when logging a new close -
+//   see suggestNextCutoffDate in balanceHelpers.js - never trusted as the
+//   authoritative source. dueDateOffsetDays IS a fixed, trusted offset
+//   (due date = logged cutoff + N days), since only the cutoff itself was
+//   flagged as variable.

@@ -360,12 +360,20 @@ export function ExpenseProvider({ children }) {
       costCurrencyAccountId = null,
       startingCostBasis = null, // only meaningful when unit is set - see below
       startingPrice = null, // only meaningful when unit is set; the UI requires this for foreign accounts
+      isLiability = false,
+      creditLimit = null, // liability-only; plain mutable field, not historically tracked
+      statementCutoffDay = null, // liability-only; advisory prefill for logging statement closes, see suggestNextCutoffDate
+      dueDateOffsetDays = null, // liability-only; due date = logged cutoff date + this many days
     }) => {
       const accountId = await db.accounts.add({
         name: name.trim(),
         typeId: typeId ?? null,
         unit: unit || null,
         costCurrencyAccountId: unit ? costCurrencyAccountId ?? null : null,
+        isLiability: Boolean(isLiability),
+        creditLimit: isLiability && creditLimit != null && creditLimit !== "" ? Number(creditLimit) : null,
+        statementCutoffDay: isLiability ? Number(statementCutoffDay) : null,
+        dueDateOffsetDays: isLiability ? Number(dueDateOffsetDays) : null,
         createdAt: new Date(),
       });
 
@@ -479,6 +487,32 @@ export function ExpenseProvider({ children }) {
         type: "reconciliation",
         amount: null,
         balance: Number(balance),
+        category: null,
+        comments: comments?.trim() || "",
+      });
+      await reloadAssets();
+      return id;
+    }
+  );
+
+  // Marks where one liability billing cycle ends and the next begins - a
+  // pure date marker, no amount. Logged explicitly by the user each cycle
+  // (via LogStatementCloseModal) rather than computed, since real-world
+  // cutoff dates shift by a day or more around weekends/holidays in ways
+  // that vary by issuer - see getStatementCloseEntries/suggestNextCutoffDate
+  // in balanceHelpers.js. Mirrors addReconciliation's shape closely.
+  const addStatementClose = withErrorHandling(
+    "addStatementClose",
+    async (accountId, { date, comments }) => {
+      const id = await db.balanceEntries.add({
+        accountId,
+        date: new Date(date),
+        type: "statementClose",
+        amount: null,
+        balance: null,
+        costBasis: null,
+        fee: null,
+        pricePerUnit: null,
         category: null,
         comments: comments?.trim() || "",
       });
@@ -1301,6 +1335,7 @@ export function ExpenseProvider({ children }) {
     removeAccount,
     addIncomeEntry,
     addReconciliation,
+    addStatementClose,
     addConvertEntry,
     addMarkPrice,
     addTransfer,

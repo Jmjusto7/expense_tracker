@@ -8,6 +8,8 @@ import ExpensesPage from "./pages/ExpensesPage";
 import SettingsPage from "./pages/SettingsPage";
 import AccountsPage from "./pages/AccountsPage";
 import AccountDetailPage from "./pages/AccountDetailPage";
+import LiabilitiesPage from "./pages/LiabilitiesPage";
+import LiabilityDetailPage from "./pages/LiabilityDetailPage";
 import HierarchyGuard from "./components/HierarchyGuard";
 
 export default function AppRoutes() {
@@ -64,6 +66,19 @@ export default function AppRoutes() {
         element={
           <HierarchyGuard>
             <AccountDetailPage />
+          </HierarchyGuard>
+        }
+      />
+
+      {/* Liabilities list page */}
+      <Route path="/liabilities" element={<LiabilitiesPage />} />
+
+      {/* Liability detail */}
+      <Route
+        path="/liabilities/:liabilityId"
+        element={
+          <HierarchyGuard>
+            <LiabilityDetailPage />
           </HierarchyGuard>
         }
       />

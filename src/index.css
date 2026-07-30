@@ -29,6 +29,9 @@
   --color-alert: #a1423b;         /* destructive actions */
   --color-alert-soft: #f5e4e2;
 
+  --color-warning: #a1791f;       /* unsettled/needs-attention states (e.g. an unpaid liability due) - distinct from alert's red, which reads as danger/destructive rather than "still pending" */
+  --color-warning-soft: #f5eddc;
+
   /* Type */
   --font-display: "Fraunces", serif;
   --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;

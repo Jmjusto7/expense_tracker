@@ -23,21 +23,28 @@ import { buildMonthlyIncomeExpense } from "../utils/incomeExpenseHelpers";
 export default function AccountsPage() {
   const { accounts, balanceEntries, allTransactions, accountTypes, removeAccount } = useExpenseContext();
 
+  // Liabilities live on their own page now - see LiabilitiesPage.jsx. Same
+  // underlying `accounts` table, filtered by isLiability.
+  const assetAccounts = useMemo(() => accounts.filter((a) => !a.isLiability), [accounts]);
+
   const [showAddModal, setShowAddModal] = useState(false);
   const [editAccountId, setEditAccountId] = useState(null);
 
-  const totalBalance = useMemo(() => getTotalBalance(accounts, balanceEntries), [accounts, balanceEntries]);
+  const totalBalance = useMemo(
+    () => getTotalBalance(assetAccounts, balanceEntries),
+    [assetAccounts, balanceEntries]
+  );
 
   const monthlyIncomeExpenseData = useMemo(
     () => buildMonthlyIncomeExpense(allTransactions, balanceEntries),
     [allTransactions, balanceEntries]
   );
 
-  // One row per reconciliation gap, across every account, sorted
+  // One row per reconciliation gap, across every asset account, sorted
   // chronologically - kept on its own timeline rather than forced into
   // calendar months (reconciliation periods can skip months).
   const impliedSpendRows = useMemo(() => {
-    return accounts
+    return assetAccounts
       .flatMap((acc) =>
         getImpliedSpendPeriods(balanceEntries, acc.id).map((p) => ({
           ...p,
@@ -46,7 +53,7 @@ export default function AccountsPage() {
         }))
       )
       .sort((a, b) => new Date(a.toDate) - new Date(b.toDate));
-  }, [accounts, balanceEntries]);
+  }, [assetAccounts, balanceEntries]);
 
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
@@ -62,13 +69,13 @@ export default function AccountsPage() {
         </button>
       </div>
 
-      {accounts?.length === 0 && (
+      {assetAccounts?.length === 0 && (
         <p className="text-ink-muted">
           No accounts yet. Add one to start tracking balances.
         </p>
       )}
 
-      {accounts.length > 0 && (
+      {assetAccounts.length > 0 && (
         <div className="bg-surface border border-border rounded-lg p-6 mb-8">
           <div className="flex items-baseline justify-between mb-4">
             <h2 className="text-base font-semibold text-ink">Total Balance</h2>
@@ -80,13 +87,13 @@ export default function AccountsPage() {
           <div className="grid grid-cols-1 md:grid-cols-[3fr_2fr] gap-6 mb-6">
             <div>
               <h3 className="text-sm font-semibold mb-2 text-ink">Composition</h3>
-              <AssetCompositionChart accounts={accounts} balanceEntries={balanceEntries} />
+              <AssetCompositionChart accounts={assetAccounts} balanceEntries={balanceEntries} />
             </div>
 
             <div>
               <h3 className="text-sm font-semibold mb-2 text-ink">Allocation by Type</h3>
               <AssetAllocationByTypeChart
-                accounts={accounts}
+                accounts={assetAccounts}
                 accountTypes={accountTypes}
                 balanceEntries={balanceEntries}
                 heightClassName="h-56"
@@ -120,10 +127,10 @@ export default function AccountsPage() {
       )}
 
       <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {accounts?.map((account) => {
+        {assetAccounts?.map((account) => {
           const isForeign = account.unit != null;
           const balance = getCurrentBalance(balanceEntries, account.id);
-          const phpValue = isForeign ? getCurrentValuePhp(balanceEntries, accounts, account.id) : balance;
+          const phpValue = isForeign ? getCurrentValuePhp(balanceEntries, assetAccounts, account.id) : balance;
           const staleDays = daysSinceLastReconciliation(balanceEntries, account.id);
           const balanceColor = phpValue != null && phpValue < 0 ? "text-alert" : "text-ledger-dark";
           const typeName = account.typeId != null

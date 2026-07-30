@@ -22,6 +22,15 @@ export const formatMonthYear = (date) => {
   return d.toLocaleString("default", { month: "short", year: "2-digit" });
 };
 
+// Short weekday label (e.g. "Mon") for a Date/date-like value - used
+// wherever a day-grouped list benefits from a day-of-week indicator, like
+// TravelDetailPage's day-by-day transaction log.
+export const formatWeekday = (date) => {
+  const d = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString(undefined, { weekday: "short" });
+};
+
 // Picks a sensible default date for the Add Transaction date picker, so the
 // common case (logging something from today) doesn't require touching the
 // calendar at all. Only defaults when the modal is open on the real current
