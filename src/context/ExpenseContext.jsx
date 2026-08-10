@@ -254,7 +254,43 @@ export function ExpenseProvider({ children }) {
         .equals([yearId, monthId, dayId, transaction.category])
         .first();
 
-      if (existing) return existing.id;
+      // Same day + category already has a row - e.g. two rows in one
+      // Add/Edit session both typed the same category, or a fresh add
+      // landing on a category the day already has. The unique index
+      // means this can never be a second row - merge into the existing
+      // row's amountBreakdown instead of silently discarding this one's
+      // amount/comments/travel/account, mirroring the merge
+      // addConvertEntry's fee-auto-logging already does for the same
+      // (yearId+monthId+dayId+category) collision.
+      if (existing) {
+        const existingBreakdown = existing.amountBreakdown?.length
+          ? existing.amountBreakdown
+          : [existing.amount];
+        const newBreakdown = transaction.amountBreakdown?.length
+          ? transaction.amountBreakdown
+          : [transaction.amount];
+        const mergedBreakdown = [...existingBreakdown, ...newBreakdown];
+
+        const mergedComments = [existing.comments, transaction.comments]
+          .filter((c) => c && c.trim())
+          .join("; ");
+
+        // Travel/account tags: keep the existing row's if it already has
+        // one, otherwise adopt the incoming row's - never silently drops
+        // a tag either side had.
+        await db.transactions.update(existing.id, {
+          amount: mergedBreakdown.reduce((sum, v) => sum + Number(v || 0), 0),
+          amountBreakdown: mergedBreakdown,
+          comments: mergedComments,
+          travelId: existing.travelId ?? normalizeTravelId(transaction.travelId),
+          accountId: existing.accountId ?? (transaction.accountId ?? null),
+        });
+
+        await syncShadowExpenseEntry(existing.id);
+        await reloadHierarchy();
+        await reloadAssets();
+        return existing.id;
+      }
 
       const id = await db.transactions.add({
         ...transaction,
@@ -526,9 +562,47 @@ export function ExpenseProvider({ children }) {
   // "Convert" action for accounts with a `unit` set. Distinct from
   // addIncomeEntry, which stays PHP-accounts-only and untouched (see
   // foreign-assets-plan.md §0/§2.2 - a conversion is not income).
+  //
+  // sourceAccountId (optional): the account the money actually came from.
+  // Without it, Convert only ever credited the destination - the source
+  // account's book balance silently stayed overstated by whatever was
+  // spent, since the documented "Transfer-then-Convert" workaround is
+  // actually impossible: addTransfer refuses same-unit-only, and a
+  // foreign destination's unit is by definition not the source's. Passing
+  // sourceAccountId debits that account for costBasis + fee (in its own
+  // currency) at the same moment, so both sides of the conversion land in
+  // one action. Omitting it keeps the old destination-only behavior
+  // exactly as before - fully backward compatible.
   const addConvertEntry = withErrorHandling(
     "addConvertEntry",
-    async (accountId, { date, amount, costBasis, fee = null, feeCategory = null, comments }) => {
+    async (accountId, { date, amount, costBasis, fee = null, feeCategory = null, comments, sourceAccountId = null }) => {
+      const feeAmt = fee != null && fee !== "" ? Number(fee) : null;
+      let transferGroupId = null;
+
+      if (sourceAccountId != null) {
+        const allAccountsForCheck = await db.accounts.toArray();
+        const destAccount = allAccountsForCheck.find((a) => a.id === accountId);
+        const sourceAccount = allAccountsForCheck.find((a) => a.id === sourceAccountId);
+        if (!sourceAccount) throw new Error("Funding source account not found.");
+
+        // The source must actually hold the currency costBasis is
+        // denominated in - PHP if the destination is priced directly in
+        // PHP, or whatever the destination's costCurrencyAccountId's unit
+        // is otherwise (e.g. a USD wallet funding a VOO purchase).
+        const requiredUnit =
+          destAccount?.costCurrencyAccountId != null
+            ? allAccountsForCheck.find((a) => a.id === destAccount.costCurrencyAccountId)?.unit ?? null
+            : null;
+
+        if ((sourceAccount.unit || null) !== (requiredUnit || null)) {
+          throw new Error(
+            `Funding source must be in ${requiredUnit || "PHP"} to match this account's cost currency.`
+          );
+        }
+
+        transferGroupId = `conv_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+      }
+
       const id = await db.balanceEntries.add({
         accountId,
         date: new Date(date),
@@ -536,11 +610,42 @@ export function ExpenseProvider({ children }) {
         amount: Number(amount),
         balance: null,
         costBasis: Number(costBasis),
-        fee: fee != null && fee !== "" ? Number(fee) : null,
+        fee: feeAmt,
         pricePerUnit: null,
         category: null,
         comments: comments?.trim() || "",
+        ...(transferGroupId ? { transferGroupId, counterpartAccountId: sourceAccountId } : {}),
       });
+
+      // Debit the funding source, in its own currency, for what actually
+      // left it (cost basis + fee). Deliberately typed "transfer", not
+      // "convert" - getLatestPrice/getAverageCost read the most recent
+      // "convert" entry on an account as an implied price mark, and this
+      // leg carries no price information of its own; typing it "convert"
+      // would corrupt the source's own valuation whenever the source is
+      // itself a foreign-asset account (e.g. debiting a USD broker to fund
+      // a VOO purchase). "transfer" is already folded into the balance
+      // walk (getInflowEntries) and already ignored by price/cost-basis
+      // logic, so this reuses proven machinery instead of adding a new
+      // entry type. Shares transferGroupId with the convert entry above so
+      // removeBalanceEntry's paired-delete logic (broadened below) removes
+      // both legs together, regardless of which one is deleted from.
+      if (sourceAccountId != null) {
+        await db.balanceEntries.add({
+          accountId: sourceAccountId,
+          date: new Date(date),
+          type: "transfer",
+          amount: -(Number(costBasis) + (feeAmt || 0)),
+          balance: null,
+          costBasis: null,
+          fee: null,
+          pricePerUnit: null,
+          category: null,
+          comments: comments?.trim() || "",
+          transferGroupId,
+          counterpartAccountId: accountId,
+        });
+      }
 
       // Fee auto-logging - the one deliberate exception to accounts and
       // expenses staying independent (foreign-assets-plan.md §5), scoped
@@ -650,10 +755,10 @@ export function ExpenseProvider({ children }) {
   // Transfer: moves units between two of the user's own accounts. Unlike
   // Convert, this never changes what the units *are* - both legs must
   // share the same `unit` (null == null counts, i.e. two ordinary PHP
-  // accounts). Crossing currencies is a Transfer-then-Convert flow
-  // instead: move PHP in via a same-unit transfer, then Convert it, which
-  // already handles cost basis and fees correctly - see
-  // balance-transfers-plan.md.
+  // accounts). Crossing currencies is a Convert instead - pick this
+  // account as Convert's Funding Source on the destination account (see
+  // addConvertEntry's sourceAccountId), which debits it directly, in the
+  // same action that credits the destination.
   //
   // Written as two balanceEntries rows (type "transfer") linked by a
   // generated transferGroupId: a negative-amount leg on the source
@@ -661,9 +766,19 @@ export function ExpenseProvider({ children }) {
   // logged as "income" on the destination or implied-spend on the source -
   // getInflowEntries in balanceHelpers.js folds both legs into the normal
   // balance walk so neither side is misreported.
+  //
+  // fee (optional, in the transfer's own unit): a same-currency transfer
+  // can still cost something (a wire fee, a deposit fee) - the outgoing
+  // leg reflects the full amount that actually left the source, the
+  // incoming leg reflects amount - fee (what actually arrived), same
+  // real-world shape as a wire transfer. The fee itself is auto-logged as
+  // a PHP expense, same "chain to PHP via the account's own valuation,
+  // merge into a same-day/same-category transaction" pattern as
+  // addConvertEntry's fee handling. Omitting fee keeps the old behavior
+  // exactly as before.
   const addTransfer = withErrorHandling(
     "addTransfer",
-    async (fromAccountId, toAccountId, { date, amount, comments }) => {
+    async (fromAccountId, toAccountId, { date, amount, comments, fee = null, feeCategory = null }) => {
       if (fromAccountId === toAccountId) {
         throw new Error("Can't transfer an account to itself.");
       }
@@ -681,6 +796,7 @@ export function ExpenseProvider({ children }) {
 
       const transferGroupId = `xfer_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
       const amt = Number(amount);
+      const feeAmt = fee != null && fee !== "" ? Number(fee) : 0;
       const trimmedComments = comments?.trim() || "";
       const entryDate = new Date(date);
 
@@ -691,7 +807,7 @@ export function ExpenseProvider({ children }) {
         amount: -amt,
         balance: null,
         costBasis: null,
-        fee: null,
+        fee: feeAmt || null,
         pricePerUnit: null,
         category: null,
         comments: trimmedComments,
@@ -703,7 +819,7 @@ export function ExpenseProvider({ children }) {
         accountId: toAccountId,
         date: entryDate,
         type: "transfer",
-        amount: amt,
+        amount: amt - feeAmt,
         balance: null,
         costBasis: null,
         fee: null,
@@ -713,6 +829,69 @@ export function ExpenseProvider({ children }) {
         transferGroupId,
         counterpartAccountId: fromAccountId,
       });
+
+      // Fee auto-logging - skipped entirely if no fee was given, so this
+      // changes nothing for a plain transfer. Same known limitation as
+      // Convert's fee logging: linked back to the transfer only via
+      // `comments` text, not a real reference.
+      if (feeAmt > 0) {
+        const allEntries = await db.balanceEntries.toArray();
+
+        // Rate to PHP, from the source account's own current valuation -
+        // getCurrentValuePhp already walks any costCurrencyAccountId chain
+        // internally, so this one call correctly handles a plain PHP
+        // account (unit null -> rate 1), a foreign account priced
+        // directly in PHP, or a foreign account priced through another
+        // foreign account, without needing separate branches for each.
+        let feeInPhp = feeAmt;
+        let feeNote = "";
+
+        if (fromAccount.unit != null) {
+          const refUnits = getCurrentBalance(allEntries, fromAccountId, entryDate);
+          const refValuePhp = getCurrentValuePhp(allEntries, allAccounts, fromAccountId, entryDate);
+          if (refUnits && refValuePhp != null) {
+            const rate = refValuePhp / refUnits;
+            feeInPhp = feeAmt * rate;
+            feeNote = ` (${fromAccount.unit} ${feeAmt.toFixed(2)} \u2248 \u20b1${feeInPhp.toFixed(2)})`;
+          }
+        }
+
+        const feeDate = entryDate;
+        const category = feeCategory?.trim() || "Fees";
+
+        const yearId = await addYear(feeDate.getFullYear());
+        const monthId = await addMonth(yearId, ALL_MONTHS[feeDate.getMonth()]);
+        const dayId = await addDay(yearId, monthId, feeDate.getDate());
+
+        const existingFeeTx = await db.transactions
+          .where("[yearId+monthId+dayId+category]")
+          .equals([yearId, monthId, dayId, category])
+          .first();
+
+        if (existingFeeTx) {
+          const newBreakdown = [...(existingFeeTx.amountBreakdown || [existingFeeTx.amount]), feeInPhp];
+          await db.transactions.update(existingFeeTx.id, {
+            amount: newBreakdown.reduce((s, v) => s + Number(v), 0),
+            amountBreakdown: newBreakdown,
+            comments: existingFeeTx.comments
+              ? `${existingFeeTx.comments}; auto-logged fee${feeNote}`
+              : `Auto-logged: ${fromAccount.name} transfer fee${feeNote}`,
+          });
+        } else {
+          await db.transactions.add({
+            yearId,
+            monthId,
+            dayId,
+            category,
+            amount: feeInPhp,
+            amountBreakdown: [feeInPhp],
+            comments: `Auto-logged: ${fromAccount.name} transfer fee${feeNote}`,
+            travelId: null,
+          });
+        }
+
+        await reloadHierarchy();
+      }
 
       await reloadAssets();
       return { transferGroupId, outId, inId };
@@ -734,8 +913,12 @@ export function ExpenseProvider({ children }) {
 
     // A transfer only makes sense as a pair - deleting one leg without the
     // other would leave the money "created" or "destroyed" on whichever
-    // side survives. Always remove both legs together via transferGroupId.
-    if (entry.type === "transfer" && entry.transferGroupId) {
+    // side survives. Same logic now applies to a Convert entry that has a
+    // linked funding-source debit (addConvertEntry's sourceAccountId) -
+    // both share transferGroupId the same way a plain transfer's two legs
+    // do, so this fires for either type and removes both legs together,
+    // regardless of which one the user deletes from.
+    if ((entry.type === "transfer" || entry.type === "convert") && entry.transferGroupId) {
       const pairIds = allEntries
         .filter((e) => e.transferGroupId === entry.transferGroupId)
         .map((e) => e.id);
@@ -1112,9 +1295,14 @@ export function ExpenseProvider({ children }) {
       // A transfer's OTHER leg can reference a removed duplicate account
       // via counterpartAccountId even when this leg's own accountId didn't
       // need remapping - checked independently of the accountId remap
-      // above rather than only for entries already caught by it.
+      // above rather than only for entries already caught by it. Also
+      // covers a Convert entry's own counterpartAccountId (its linked
+      // funding-source leg, set when sourceAccountId was given).
       const transfersReferencingRemoved = allBalanceEntries.filter(
-        (e) => e.type === "transfer" && e.counterpartAccountId != null && removedAccountIds.includes(e.counterpartAccountId)
+        (e) =>
+          (e.type === "transfer" || e.type === "convert") &&
+          e.counterpartAccountId != null &&
+          removedAccountIds.includes(e.counterpartAccountId)
       );
       for (const e of transfersReferencingRemoved) {
         await db.balanceEntries.update(e.id, { counterpartAccountId: accountIdRemap[e.counterpartAccountId] });

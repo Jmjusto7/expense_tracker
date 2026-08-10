@@ -4,7 +4,13 @@ import { CreditCard, Scale, ArrowLeftRight, CalendarCheck, Trash2, ChevronDown }
 import { useExpenseContext } from "../context/ExpenseContext";
 import { formatCurrency } from "../utils/formatCurrency";
 import { formatDate, ALL_MONTHS } from "../utils/dateHelpers";
-import { getStatementInfo, getAccountEntriesSorted, getStatementCloseEntries } from "../utils/balanceHelpers";
+import {
+  getStatementInfo,
+  getAccountEntriesSorted,
+  getStatementCloseEntries,
+  getReconciliations,
+  getBalanceAsOf,
+} from "../utils/balanceHelpers";
 import AccountBalanceChart from "../components/AccountBalanceChart";
 import ReconcileBalanceModal from "../components/ReconcileBalanceModal";
 import TransferModal from "../components/TransferModal";
@@ -48,54 +54,74 @@ export default function LiabilityDetailPage() {
     .reverse();
 
   // Groups this liability's linked ("Paid From") transactions into
-  // billing-cycle buckets, bounded by its own logged statement closes (see
-  // getStatementCloseEntries) - so what actually comprises Total Balance
-  // and Statement Balance is answerable right here, not just by cross-
-  // referencing the Expenses tab. Most recent cycle (the still-
-  // accumulating, unbilled one) first. A plain const rather than useMemo,
-  // matching `entries` above - keeps this file's hook order simple given
-  // the early return right below.
+  // billing-cycle buckets, so what actually comprises Total Balance and
+  // Statement Balance is answerable right here, not just by cross-
+  // referencing the Expenses tab.
+  //
+  // Boundaries are the union of every RECONCILIATION date and every
+  // logged statement-close date - not statement closes alone. Both reset
+  // what counts toward the balance going forward (see getAnchor in
+  // balanceHelpers.js: it always uses the MOST RECENT reconciliation
+  // at-or-before a date, discarding everything before it, statement close
+  // or not) - a cycle grouping that only knew about statement closes
+  // would silently include transactions that were already absorbed into a
+  // later reconciliation, or miscount when no statement has been logged
+  // yet at all (there's always at least one reconciliation, the starting
+  // balance from account creation - never true "the beginning of time").
+  //
+  // Each cycle's Opening/Closing Balance comes directly from
+  // getBalanceAsOf - the SAME function Total Balance itself uses - rather
+  // than re-summing the itemized transactions here, so the two can never
+  // drift apart the way the previous version did.
   const linkedTransactions = allTransactions.filter((t) => t.accountId === numericId);
-  const closes = getStatementCloseEntries(balanceEntries, numericId);
 
-  // Cycle boundaries: (-∞, close1], (close1, close2], ..., (lastClose, now]
-  const cycleBoundaries = [null, ...closes.map((c) => c.date), null];
-  const cycleBuckets = [];
+  const boundaryKey = (d) => new Date(d).toISOString().slice(0, 10);
+  const boundaryMap = new Map(); // day-string -> Date, deduped
+  getReconciliations(balanceEntries, numericId).forEach((r) => boundaryMap.set(boundaryKey(r.date), new Date(r.date)));
+  getStatementCloseEntries(balanceEntries, numericId).forEach((c) =>
+    boundaryMap.set(boundaryKey(c.date), new Date(c.date))
+  );
+  const sortedBoundaries = [...boundaryMap.values()].sort((a, b) => a - b);
+  // Trailing null = "now", the still-open/unbilled cycle - never a
+  // leading null, since the earliest boundary is always a real
+  // reconciliation date (addAccount always creates one - see
+  // getAnchor's own doc comment).
+  const cycleBoundaries = [...sortedBoundaries, null];
+
+  const cycles = [];
   for (let i = 0; i < cycleBoundaries.length - 1; i++) {
-    cycleBuckets.push({ start: cycleBoundaries[i], end: cycleBoundaries[i + 1], transactions: [] });
+    const start = cycleBoundaries[i];
+    const end = cycleBoundaries[i + 1];
+    const startTs = start.getTime();
+    const endTs = end ? end.getTime() : null;
+
+    const transactions = linkedTransactions
+      .map((t) => ({ ...t, resolvedDate: new Date(t.yearNumber, ALL_MONTHS.indexOf(t.monthName), t.dayNumber) }))
+      .filter((t) => {
+        const tTs = t.resolvedDate.getTime();
+        return tTs > startTs && (endTs === null || tTs <= endTs); // matches getAnchor's own strictly-after semantics
+      })
+      .sort((a, b) => a.resolvedDate - b.resolvedDate);
+
+    cycles.push({
+      start,
+      end,
+      transactions,
+      openingBalance: getBalanceAsOf(balanceEntries, numericId, start),
+      closingBalance: end ? getBalanceAsOf(balanceEntries, numericId, end) : info.totalBalance,
+    });
   }
 
-  linkedTransactions.forEach((t) => {
-    const tDate = new Date(t.yearNumber, ALL_MONTHS.indexOf(t.monthName), t.dayNumber);
-    const tTs = tDate.getTime();
-    const bucket = cycleBuckets.find((b) => {
-      const afterStart = !b.start || tTs > b.start.getTime();
-      const atOrBeforeEnd = !b.end || tTs <= b.end.getTime();
-      return afterStart && atOrBeforeEnd;
-    });
-    if (bucket) bucket.transactions.push({ ...t, resolvedDate: tDate });
-  });
-
-  const cycles = cycleBuckets
-    .map((b) => ({
-      ...b,
-      transactions: b.transactions.sort((a, c) => a.resolvedDate - c.resolvedDate),
-      total: b.transactions.reduce((sum, t) => sum + Number(t.amount || 0), 0),
-    }))
-    .reverse() // most recent cycle first
-    .filter((c, i) => c.transactions.length > 0 || i === 0); // always show the current cycle, even empty
-
-  const visibleCycles = showAllCycles ? cycles : cycles.slice(0, 2);
-  const hiddenCycleCount = cycles.length - visibleCycles.length;
+  const orderedCycles = cycles.reverse(); // most recent cycle first
+  const visibleCycles = showAllCycles ? orderedCycles : orderedCycles.slice(0, 2);
+  const hiddenCycleCount = orderedCycles.length - visibleCycles.length;
 
   const cycleLabel = (cycle) =>
     cycle.end === null
-      ? cycle.start
-        ? `Current Cycle (since ${formatDate(cycle.start)})`
-        : "Current Cycle"
-      : cycle.start
-        ? `Statement: ${formatDate(cycle.start)} – ${formatDate(cycle.end)}`
-        : `Through ${formatDate(cycle.end)}`;
+      ? `Current Cycle (since ${formatDate(cycle.start)})`
+      : `${formatDate(cycle.start)} – ${formatDate(cycle.end)}`;
+
+  const chargesTotal = (cycle) => cycle.transactions.reduce((sum, t) => sum + Number(t.amount || 0), 0);
 
   const handleDeleteEntry = async (entryId) => {
     setDeleteError("");
@@ -205,48 +231,70 @@ export default function LiabilityDetailPage() {
       <div className="bg-surface rounded-lg border border-border p-4 mb-6">
         <h2 className="text-sm font-semibold text-ink mb-3">What Comprises This Balance</h2>
         <p className="text-xs text-ink-muted mb-3">
-          Transactions linked here via "Paid From" - each billing cycle bounded by the statement
-          closes you've logged below.
+          Charges linked here via "Paid From", grouped by billing cycle. Opening/Closing Balance
+          come from the same calculation Total Balance uses - if they don't match Opening +
+          Charges exactly, a payment or other adjustment also happened that cycle (see History
+          below for those).
         </p>
 
-        {visibleCycles.map((cycle, i) => (
-          <div key={cycle.start ? cycle.start.toISOString() : "start"} className="mb-3 last:mb-0">
-            <div className="flex items-center justify-between bg-surface-sunken px-3 py-2 rounded-t-md border border-border">
-              <span className="text-xs font-semibold text-ink">
-                {cycleLabel(cycle)}
-                {cycle.end === null && (
-                  <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-warning-soft text-warning uppercase tracking-wide">
-                    Unbilled
-                  </span>
-                )}
-              </span>
-              <span className="money text-xs font-semibold text-alert">{formatCurrency(cycle.total)}</span>
-            </div>
+        {visibleCycles.map((cycle) => {
+          const charges = chargesTotal(cycle);
+          const explainedByCharges = cycle.openingBalance != null && cycle.closingBalance != null
+            ? Math.abs(cycle.closingBalance - (cycle.openingBalance - charges)) < 0.01
+            : true;
 
-            {cycle.transactions.length === 0 ? (
-              <p className="text-xs text-ink-muted text-center py-4 border border-t-0 border-border rounded-b-md">
-                No charges linked yet this cycle.
-              </p>
-            ) : (
-              <table className="w-full text-left border-collapse text-sm">
-                <tbody>
-                  {cycle.transactions.map((t) => (
-                    <tr key={t.id}>
-                      <td className="border-t border-border px-3 py-1.5 text-ink-muted text-xs whitespace-nowrap">
-                        {formatDate(t.resolvedDate)}
-                      </td>
-                      <td className="border-t border-border px-3 py-1.5 text-ink w-[30%]">{t.category}</td>
-                      <td className="border-t border-border px-3 py-1.5 text-ink-muted text-xs">{t.comments}</td>
-                      <td className="money border-t border-border px-3 py-1.5 text-right font-medium text-ink w-[110px]">
-                        {formatCurrency(t.amount)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        ))}
+          return (
+            <div key={cycle.start.toISOString()} className="mb-3 last:mb-0">
+              <div className="bg-surface-sunken px-3 py-2 rounded-t-md border border-border">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-ink">
+                    {cycleLabel(cycle)}
+                    {cycle.end === null && (
+                      <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-warning-soft text-warning uppercase tracking-wide">
+                        Unbilled
+                      </span>
+                    )}
+                  </span>
+                  <span className="money text-xs font-semibold text-alert">
+                    {charges > 0 ? "+" : ""}
+                    {formatCurrency(charges)} charged
+                  </span>
+                </div>
+                <div className="flex items-center justify-between mt-1 text-[11px] text-ink-muted">
+                  <span>
+                    Opening: {cycle.openingBalance == null ? "—" : formatCurrency(Math.abs(cycle.openingBalance))}
+                    {" → "}
+                    Closing: {cycle.closingBalance == null ? "—" : formatCurrency(Math.abs(cycle.closingBalance))}
+                  </span>
+                  {!explainedByCharges && <span>+ a payment/adjustment this cycle</span>}
+                </div>
+              </div>
+
+              {cycle.transactions.length === 0 ? (
+                <p className="text-xs text-ink-muted text-center py-4 border border-t-0 border-border rounded-b-md">
+                  No charges linked yet this cycle.
+                </p>
+              ) : (
+                <table className="w-full text-left border-collapse text-sm">
+                  <tbody>
+                    {cycle.transactions.map((t) => (
+                      <tr key={t.id}>
+                        <td className="border-t border-border px-3 py-1.5 text-ink-muted text-xs whitespace-nowrap">
+                          {formatDate(t.resolvedDate)}
+                        </td>
+                        <td className="border-t border-border px-3 py-1.5 text-ink w-[30%]">{t.category}</td>
+                        <td className="border-t border-border px-3 py-1.5 text-ink-muted text-xs">{t.comments}</td>
+                        <td className="money border-t border-border px-3 py-1.5 text-right font-medium text-ink w-[110px]">
+                          {formatCurrency(t.amount)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          );
+        })}
 
         {hiddenCycleCount > 0 && (
           <button

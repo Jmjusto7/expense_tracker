@@ -30,13 +30,23 @@ function StatRow({
 // category NAME for Top Spending Category (that one answers "which
 // category", not "how much") - so these are deliberately not templated
 // identically to each other.
+// Status -> styling for the Next Payment Due card - overdue reads as
+// urgent (alert), due soon as a warning, further out as plain/neutral
+// (not "settled" the way Liabilities Due This Month's green is, since
+// something IS still owed, just not urgently).
+const DUE_STATUS_STYLES = {
+  overdue: { valueColor: "text-alert", bgColor: "bg-alert-soft" },
+  dueSoon: { valueColor: "text-warning", bgColor: "bg-warning-soft" },
+  upcoming: { valueColor: "text-ink", bgColor: "" },
+};
+
 export default function QuickStatsPanel({
   savingsRatePct,
   largestExpense,
   topCategory,
-  transactionCount,
-  transactionCountDelta,
+  spendPace,
   liabilitiesDueThisMonth,
+  nextPaymentDue,
 }) {
   // Signed: positive = still owed somewhere this month (warning/amber),
   // 0 or negative = everything due this month is settled or net overpaid
@@ -51,6 +61,29 @@ export default function QuickStatsPanel({
   const dueColor = dueIsSettled ? "text-ledger-dark" : "text-warning";
   const dueBg = dueIsSettled ? "bg-ledger-soft" : "bg-warning-soft";
   const dueSecondary = dueAmount > 0 ? "Still unsettled" : dueAmount < 0 ? "Credit balance" : "Paid in full";
+
+  // Spend Pace: projected month-end total vs last month's actual pace.
+  // Higher pace = spending faster than last month (bad, alert-red), lower
+  // pace = spending slower (good, ledger-green) - same sign convention as
+  // ExpenseAnalytics's "vs Previous Month" card.
+  const pacePct = spendPace?.paceVsLastMonthPct ?? null;
+  const paceColor = pacePct > 0 ? "text-alert" : pacePct < 0 ? "text-ledger-dark" : "text-ink";
+
+  // Next Payment Due: null means nothing currently owed anywhere - a
+  // genuinely good state, styled the same green as a settled statement.
+  const dueStatusStyle = nextPaymentDue
+    ? DUE_STATUS_STYLES[nextPaymentDue.status]
+    : { valueColor: "text-ledger-dark", bgColor: "bg-ledger-soft" };
+
+  const nextDueTertiary = !nextPaymentDue
+    ? undefined
+    : nextPaymentDue.status === "overdue"
+      ? `${Math.abs(nextPaymentDue.daysUntilDue)} day${Math.abs(nextPaymentDue.daysUntilDue) === 1 ? "" : "s"} overdue`
+      : nextPaymentDue.daysUntilDue === 0
+        ? "Due today"
+        : nextPaymentDue.daysUntilDue <= 7
+          ? `Due in ${nextPaymentDue.daysUntilDue} day${nextPaymentDue.daysUntilDue === 1 ? "" : "s"}`
+          : `Due ${formatDate(nextPaymentDue.dueDate)}`;
 
   return (
     <div className="h-full bg-surface border border-border rounded-xl grid grid-cols-2 overflow-y-auto">
@@ -80,14 +113,15 @@ export default function QuickStatsPanel({
       />
 
       <StatRow
-        label="Transactions"
-        primary={transactionCount.toLocaleString()}
-        secondary="This Month"
+        label="Spend Pace"
+        primary={<span className="money">{spendPace ? formatCurrency(spendPace.projectedMonthTotal) : "—"}</span>}
+        secondary="Projected total this month"
         tertiary={
-          transactionCountDelta === null
-            ? undefined
-            : `${transactionCountDelta >= 0 ? "+" : ""}${transactionCountDelta} vs last month`
+          pacePct === null
+            ? "No prior month to compare"
+            : `${pacePct >= 0 ? "+" : ""}${pacePct.toFixed(0)}% vs last month's pace`
         }
+        valueColor={paceColor}
         borderBottom
       />
 
@@ -97,6 +131,16 @@ export default function QuickStatsPanel({
         secondary={dueSecondary}
         valueColor={dueColor}
         bgColor={dueBg}
+        borderRight
+      />
+
+      <StatRow
+        label="Next Payment Due"
+        primary={<span className="money">{nextPaymentDue ? formatCurrency(nextPaymentDue.amount) : "—"}</span>}
+        secondary={nextPaymentDue ? nextPaymentDue.accountName : "Nothing currently owed"}
+        tertiary={nextDueTertiary}
+        valueColor={dueStatusStyle.valueColor}
+        bgColor={dueStatusStyle.bgColor}
       />
     </div>
   );

@@ -1,12 +1,17 @@
 import { useState, useMemo } from "react";
 import { X, ArrowLeftRight } from "lucide-react";
 import { useExpenseContext } from "../context/ExpenseContext";
+import CategoryAutocompleteInput from "./transaction-row/CategoryAutocompleteInput";
 
 // Moves units between `accountId` (wherever this modal was opened from)
 // and another account of the user's - same currency/unit only. Crossing
-// currencies is a Transfer-then-Convert flow instead: move PHP in with
-// this modal, then Convert it on the destination account, which already
-// handles cost basis and fees properly.
+// currencies is a Convert instead - pick this account as Convert's
+// Funding Source on the destination account, which debits it directly
+// (and handles cost basis and fees) in the same action.
+//
+// fee (optional): a same-currency transfer can still cost something (a
+// wire fee, a deposit fee) - see addTransfer for how it's applied and
+// auto-logged.
 //
 // `mode="outgoing"` (default): accountId is the source, fixed as "From";
 // pick a destination. `mode="incoming"`: accountId is the destination,
@@ -16,7 +21,7 @@ import { useExpenseContext } from "../context/ExpenseContext";
 // leg's positive amount is what reduces how negative the card's balance
 // is, regardless of which side of the form it's shown on.
 export default function TransferModal({ accountId, onClose, mode = "outgoing" }) {
-  const { accounts, addTransfer } = useExpenseContext();
+  const { accounts, addTransfer, categories } = useExpenseContext();
   const account = accounts.find((a) => a.id === accountId);
   const isIncoming = mode === "incoming";
 
@@ -33,6 +38,8 @@ export default function TransferModal({ accountId, onClose, mode = "outgoing" })
   const [counterpartId, setCounterpartId] = useState("");
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [amount, setAmount] = useState("");
+  const [fee, setFee] = useState("");
+  const [feeCategory, setFeeCategory] = useState("");
   const [comments, setComments] = useState("");
   const [error, setError] = useState("");
 
@@ -44,10 +51,19 @@ export default function TransferModal({ accountId, onClose, mode = "outgoing" })
     if (amount === "" || isNaN(n) || n <= 0)
       return setError(`Please enter a positive amount, in ${unitLabel}.`);
 
+    if (fee !== "" && (isNaN(Number(fee)) || Number(fee) < 0))
+      return setError(`Please enter a valid fee, in ${unitLabel}, or leave it blank.`);
+
     try {
       const fromId = isIncoming ? Number(counterpartId) : accountId;
       const toId = isIncoming ? accountId : Number(counterpartId);
-      await addTransfer(fromId, toId, { date, amount: n, comments });
+      await addTransfer(fromId, toId, {
+        date,
+        amount: n,
+        comments,
+        fee: fee !== "" ? Number(fee) : null,
+        feeCategory: feeCategory.trim() || null,
+      });
       onClose();
     } catch (err) {
       console.error("Failed to transfer:", err);
@@ -154,6 +170,35 @@ export default function TransferModal({ accountId, onClose, mode = "outgoing" })
                 placeholder="e.g. 5000"
               />
             </div>
+
+            <div>
+              <label className="block text-sm font-medium text-ink-muted mb-1">
+                Fee (optional, in {unitLabel})
+              </label>
+              <input
+                type="text"
+                value={fee}
+                onChange={(e) => setFee(e.target.value)}
+                className="money w-full border border-border rounded-md px-3 py-2 text-ink bg-surface focus:ring-2 focus:ring-ledger focus:outline-none"
+                placeholder="e.g. 50"
+              />
+              <p className="text-xs text-ink-muted mt-1">
+                What actually arrives is Amount − Fee - the fee itself gets auto-logged as an
+                expense.
+              </p>
+            </div>
+
+            {fee !== "" && Number(fee) > 0 && (
+              <div>
+                <label className="block text-sm font-medium text-ink-muted mb-1">Fee Category</label>
+                <CategoryAutocompleteInput
+                  value={feeCategory}
+                  onChange={setFeeCategory}
+                  categories={categories}
+                />
+                <p className="text-xs text-ink-muted mt-1">Defaults to "Fees" if left blank.</p>
+              </div>
+            )}
 
             <div>
               <label className="block text-sm font-medium text-ink-muted mb-1">Comments</label>

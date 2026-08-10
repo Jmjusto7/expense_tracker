@@ -33,14 +33,6 @@ const SummaryPage = () => {
     [allTransactions, currentYear, currentMonthName]
   );
 
-  const lastMonthTx = useMemo(
-    () =>
-      allTransactions.filter(
-        (t) => t.yearNumber === lastMonthDate.getFullYear() && t.monthName === ALL_MONTHS[lastMonthDate.getMonth()]
-      ),
-    [allTransactions, lastMonthDate]
-  );
-
   // -------------------------
   // Income/Expense monthly rollup - feeds both summary cards and the trend
   // chart, computed once here rather than per-component.
@@ -49,6 +41,17 @@ const SummaryPage = () => {
     () => buildMonthlyIncomeExpense(allTransactions, balanceEntries),
     [allTransactions, balanceEntries]
   );
+
+  // Trailing 12 calendar months (including the current one) - the chart
+  // otherwise plots every month of history ever logged, which grows
+  // increasingly illegible as more years accumulate. Mirrors the same
+  // 12-month window trailing12MonthGap already uses for the Gap Trend stat,
+  // just applied here to the chart's own data instead of a single sum.
+  const last12MonthsRows = useMemo(() => {
+    const endTs = new Date(currentYear, today.getMonth(), 1).getTime();
+    const startTs = new Date(currentYear, today.getMonth() - 11, 1).getTime();
+    return monthlyRows.filter((r) => r.date.getTime() >= startTs && r.date.getTime() <= endTs);
+  }, [monthlyRows, currentYear, today]);
 
   const thisMonthRow = findMonthRow(monthlyRows, currentYear, today.getMonth());
   const lastMonthRow = findMonthRow(monthlyRows, lastMonthDate.getFullYear(), lastMonthDate.getMonth());
@@ -89,8 +92,22 @@ const SummaryPage = () => {
     return { name, amount, pct: totalExpense ? (amount / totalExpense) * 100 : 0 };
   }, [thisMonthTx]);
 
-  const transactionCount = thisMonthTx.length;
-  const transactionCountDelta = transactionCount - lastMonthTx.length;
+  // Projects this month's likely total from the daily average so far, then
+  // compares that projection to last month's actual pace - the one
+  // forward-looking figure on this dashboard, versus everything else here
+  // which reports what already happened. Positive pct = spending faster
+  // than last month; negative = slower.
+  const daysElapsedThisMonth = today.getDate();
+  const daysInThisMonth = new Date(currentYear, today.getMonth() + 1, 0).getDate();
+
+  const spendPace = useMemo(() => {
+    if (daysElapsedThisMonth <= 0) return null;
+    const projectedMonthTotal = (thisMonthExpense / daysElapsedThisMonth) * daysInThisMonth;
+    const paceVsLastMonthPct = lastMonthRow?.expense
+      ? ((projectedMonthTotal - lastMonthRow.expense) / lastMonthRow.expense) * 100
+      : null;
+    return { projectedMonthTotal, paceVsLastMonthPct };
+  }, [thisMonthExpense, daysElapsedThisMonth, daysInThisMonth, lastMonthRow]);
 
   // Sum of remainingDue (see getStatementInfo/getStatementPaymentStatus)
   // across every liability whose most recent statement's due date falls
@@ -110,6 +127,38 @@ const SummaryPage = () => {
         return isDueThisMonth ? sum + (info.remainingDue ?? 0) : sum;
       }, 0);
   }, [accounts, balanceEntries, currentYear, today]);
+
+  // The single soonest unpaid due date across ALL liabilities, regardless
+  // of calendar month - liabilitiesDueThisMonth above only sums what's due
+  // within the current month, so something due a few days into next month
+  // would otherwise never surface here until the month actually flips.
+  const NEXT_DUE_SOON_DAYS = 7;
+
+  const nextPaymentDue = useMemo(() => {
+    const candidates = accounts
+      .filter((a) => a.isLiability)
+      .map((a) => ({ account: a, info: getStatementInfo(balanceEntries, a, today) }))
+      .filter(({ info }) => info.dueDate && (info.remainingDue ?? 0) > 0)
+      .sort((a, b) => a.info.dueDate - b.info.dueDate);
+
+    if (candidates.length === 0) return null;
+
+    const { account, info } = candidates[0];
+    const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const dueMidnight = new Date(info.dueDate.getFullYear(), info.dueDate.getMonth(), info.dueDate.getDate());
+    const daysUntilDue = Math.round((dueMidnight - todayMidnight) / (1000 * 60 * 60 * 24));
+
+    const status =
+      daysUntilDue < 0 ? "overdue" : daysUntilDue <= NEXT_DUE_SOON_DAYS ? "dueSoon" : "upcoming";
+
+    return {
+      accountName: account.name,
+      amount: info.remainingDue,
+      dueDate: info.dueDate,
+      daysUntilDue,
+      status,
+    };
+  }, [accounts, balanceEntries, today]);
 
   // -------------------------
   // Notification bell - accounts overdue for reconciliation, the one
@@ -172,16 +221,16 @@ const SummaryPage = () => {
       {/* BOTTOM: TREND CHART (reusing the Assets-tab chart) + QUICK STATS */}
       <div className="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-4">
         <div className="h-[300px]">
-          <IncomeExpenseChart data={monthlyRows} />
+          <IncomeExpenseChart data={last12MonthsRows} />
         </div>
         <div className="h-[300px]">
           <QuickStatsPanel
             savingsRatePct={savingsRatePct}
             largestExpense={largestExpense}
             topCategory={topCategory}
-            transactionCount={transactionCount}
-            transactionCountDelta={transactionCountDelta}
+            spendPace={spendPace}
             liabilitiesDueThisMonth={liabilitiesDueThisMonth}
+            nextPaymentDue={nextPaymentDue}
           />
         </div>
       </div>
