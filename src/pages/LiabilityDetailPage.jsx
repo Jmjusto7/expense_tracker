@@ -29,8 +29,8 @@ export default function LiabilityDetailPage() {
   const [showAllCycles, setShowAllCycles] = useState(false);
   const [deleteError, setDeleteError] = useState("");
 
-  const numericId = Number(liabilityId);
-  const account = accounts.find((a) => a.id === numericId);
+  const account = accounts.find((a) => String(a.id) === liabilityId);
+  const currentAccountId = account?.id;
 
   if (!account) {
     return (
@@ -48,7 +48,7 @@ export default function LiabilityDetailPage() {
   // (see ExpenseContext's syncShadowExpenseEntry) - that spend is already
   // visible on the Expenses tab; History stays limited to actions taken
   // directly here (reconcile, transfer/payment, statement closes).
-  const entries = getAccountEntriesSorted(balanceEntries, numericId)
+  const entries = getAccountEntriesSorted(balanceEntries, currentAccountId)
     .filter((e) => e.type !== "expense")
     .slice()
     .reverse();
@@ -73,12 +73,12 @@ export default function LiabilityDetailPage() {
   // getBalanceAsOf - the SAME function Total Balance itself uses - rather
   // than re-summing the itemized transactions here, so the two can never
   // drift apart the way the previous version did.
-  const linkedTransactions = allTransactions.filter((t) => t.accountId === numericId);
+  const linkedTransactions = allTransactions.filter((t) => t.accountId === currentAccountId);
 
   const boundaryKey = (d) => new Date(d).toISOString().slice(0, 10);
   const boundaryMap = new Map(); // day-string -> Date, deduped
-  getReconciliations(balanceEntries, numericId).forEach((r) => boundaryMap.set(boundaryKey(r.date), new Date(r.date)));
-  getStatementCloseEntries(balanceEntries, numericId).forEach((c) =>
+  getReconciliations(balanceEntries, currentAccountId).forEach((r) => boundaryMap.set(boundaryKey(r.date), new Date(r.date)));
+  getStatementCloseEntries(balanceEntries, currentAccountId).forEach((c) =>
     boundaryMap.set(boundaryKey(c.date), new Date(c.date))
   );
   const sortedBoundaries = [...boundaryMap.values()].sort((a, b) => a - b);
@@ -107,8 +107,8 @@ export default function LiabilityDetailPage() {
       start,
       end,
       transactions,
-      openingBalance: getBalanceAsOf(balanceEntries, numericId, start),
-      closingBalance: end ? getBalanceAsOf(balanceEntries, numericId, end) : info.totalBalance,
+      openingBalance: getBalanceAsOf(balanceEntries, currentAccountId, start),
+      closingBalance: end ? getBalanceAsOf(balanceEntries, currentAccountId, end) : info.totalBalance,
     });
   }
 
@@ -309,7 +309,7 @@ export default function LiabilityDetailPage() {
 
       <div className="bg-surface rounded-lg border border-border p-6 mb-6">
         <div className="text-xs text-ink-muted uppercase tracking-wide mb-3">Balance Over Time</div>
-        <AccountBalanceChart entries={balanceEntries} accountId={numericId} />
+        <AccountBalanceChart entries={balanceEntries} accountId={currentAccountId} />
       </div>
 
       <div className="bg-surface rounded-lg border border-border p-4">
@@ -370,15 +370,15 @@ export default function LiabilityDetailPage() {
       </div>
 
       {showReconcile && (
-        <ReconcileBalanceModal accountId={numericId} onClose={() => setShowReconcile(false)} />
+        <ReconcileBalanceModal accountId={currentAccountId} onClose={() => setShowReconcile(false)} />
       )}
 
       {showTransfer && (
-        <TransferModal accountId={numericId} mode="incoming" onClose={() => setShowTransfer(false)} />
+        <TransferModal accountId={currentAccountId} mode="incoming" onClose={() => setShowTransfer(false)} />
       )}
 
       {showLogClose && (
-        <LogStatementCloseModal accountId={numericId} onClose={() => setShowLogClose(false)} />
+        <LogStatementCloseModal accountId={currentAccountId} onClose={() => setShowLogClose(false)} />
       )}
     </div>
   );

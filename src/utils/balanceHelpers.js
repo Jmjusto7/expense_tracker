@@ -32,15 +32,17 @@ const toDayTimestamp = (d) => {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
 };
 
-// Chronological order for one account's entries, with id as a tie-break
-// for same-day entries. The id tie-break matters because two entries
-// dated the same day still have a real "which happened first" order -
-// autoincrement id is the closest proxy we have to that.
+// Chronological order for one account's entries. Same-day entries still
+// have a real "which happened first" order - creation time is the proxy,
+// with the (random UUID) id only as a stable last resort.
+const createdAtMs = (e) => (e.createdAt ? new Date(e.createdAt).getTime() : 0);
+const compareSameDay = (a, b) => createdAtMs(a) - createdAtMs(b) || String(a.id).localeCompare(String(b.id));
+
 const sortEntriesChrono = (entries) =>
   [...entries].sort((a, b) => {
     const ta = toDayTimestamp(a.date);
     const tb = toDayTimestamp(b.date);
-    return ta !== tb ? ta - tb : a.id - b.id;
+    return ta !== tb ? ta - tb : compareSameDay(a, b);
   });
 
 export function getAccountEntriesSorted(entries, accountId) {
@@ -117,7 +119,7 @@ const sumInflowSinceAnchor = (entries, accountId, anchor, asOfDate) => {
     .filter((e) => {
       const eTs = toDayTimestamp(e.date);
       if (eTs !== anchorTs) return eTs > anchorTs && eTs <= asOfTs;
-      return e.id > anchor.id && eTs <= asOfTs; // same-day tie-break
+      return compareSameDay(e, anchor) > 0 && eTs <= asOfTs; // same-day tie-break
     })
     .reduce((sum, e) => sum + Number(e.amount || 0), 0);
 };

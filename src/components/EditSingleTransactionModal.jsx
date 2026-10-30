@@ -7,6 +7,7 @@ import CategoryAutocompleteInput from "./transaction-row/CategoryAutocompleteInp
 import TravelSelectCell from "./transaction-row/TravelSelectCell";
 import AccountSelectCell from "./transaction-row/AccountSelectCell";
 import ConfirmButton from "./ConfirmButton";
+import AmountPreview from "./AmountPreview";
 
 export default function EditSingleTransactionModal({ transaction, onClose }) {
   const { updateTransaction, removeTransaction, categories, travels, accounts } = useExpenseContext();
@@ -27,8 +28,8 @@ export default function EditSingleTransactionModal({ transaction, onClose }) {
   const handleSave = async () => {
     if (!category.trim()) return setError("Category can't be empty.");
 
-    const { total, breakdown } = parseAmountExpression(amount);
-    if (isNaN(total)) return setError("Invalid amount - use numbers separated by commas.");
+    const { total, breakdown, error: amountError } = parseAmountExpression(amount);
+    if (amountError) return setError(amountError);
 
     try {
       await updateTransaction(transaction.id, {
@@ -42,7 +43,7 @@ export default function EditSingleTransactionModal({ transaction, onClose }) {
       onClose();
     } catch (err) {
       console.error("Failed to update transaction:", err);
-      setError("Failed to save. Please try again.");
+      setError(err.message || "Failed to save. Please try again.");
     }
   };
 
@@ -90,6 +91,7 @@ export default function EditSingleTransactionModal({ transaction, onClose }) {
                 className="money w-full border border-border rounded-md px-3 py-2 text-sm bg-surface text-ink focus:ring-2 focus:ring-ledger focus:outline-none"
                 placeholder="e.g. 195.5, -130, 25.25"
               />
+              <AmountPreview value={amount} />
             </div>
 
             <div>

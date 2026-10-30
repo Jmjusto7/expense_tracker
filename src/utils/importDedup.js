@@ -38,46 +38,6 @@ export function findDuplicateGroups(items, fingerprintFn) {
   return duplicates;
 }
 
-// Maps dayId -> { year, monthName, day } so a transaction's fingerprint can
-// use the *semantic* period (year number / month name / day number)
-// instead of its yearId/monthId/dayId - two transactions from different
-// devices/exports can describe the same real day under different ids.
-export function buildDayLookup(years, months, days) {
-  const yearById = Object.fromEntries(years.map((y) => [y.id, y.year]));
-  const monthById = Object.fromEntries(months.map((m) => [m.id, m]));
-
-  const lookup = {};
-  for (const d of days) {
-    const month = monthById[d.monthId];
-    lookup[d.id] = {
-      year: yearById[d.yearId],
-      monthName: month?.name,
-      day: d.day,
-    };
-  }
-  return lookup;
-}
-
-// Fingerprint: year, month, day, category, amount, comments, breakdown,
-// travel reference, and account reference ("Paid From") - two transactions
-// matching on all of these are treated as the same real-world expense,
-// regardless of id.
-export function transactionFingerprint(t, dayLookup) {
-  const period = dayLookup[t.dayId] || {};
-  const breakdown = Array.isArray(t.amountBreakdown) ? t.amountBreakdown.join(",") : "";
-  return [
-    period.year,
-    period.monthName,
-    period.day,
-    t.category,
-    t.amount,
-    t.comments || "",
-    breakdown,
-    t.travelId ?? "null",
-    t.accountId ?? "null",
-  ].join("|");
-}
-
 // Fingerprint: the year number itself - two year rows with the same
 // `year` value (e.g. two separate exports each containing their own
 // autoincrement row for "2026") are the same real-world year.
@@ -98,10 +58,20 @@ export const dayFingerprint = (d) => `${d.yearId}:${d.monthId}:${d.day}`;
 // are treated as the same bucket.
 export const bucketFingerprint = (b) => (b.name || "").trim().toLowerCase();
 
-// Fingerprint: account name (trimmed, case-insensitive) - same treatment as
-// buckets. Two exports each with their own "Bank A" row are the same
-// real-world account.
-export const accountFingerprint = (a) => (a.name || "").trim().toLowerCase();
+// Fingerprint: account name (trimmed, case-insensitive) plus unit and
+// liability flag - a PHP "Wallet" and a USD "Wallet" are different accounts.
+export const accountFingerprint = (a) =>
+  [(a.name || "").trim().toLowerCase(), a.unit ?? "", Boolean(a.isLiability)].join("|");
+
+const dayString = (value) => {
+  if (!value) return "";
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 10);
+};
+
+// Fingerprint: trip title (trimmed, case-insensitive) plus start/end day.
+export const travelFingerprint = (t) =>
+  [(t.title || "").trim().toLowerCase(), dayString(t.startDate), dayString(t.endDate)].join("|");
 
 // Fingerprint: account type name (trimmed, case-insensitive) - same
 // treatment as buckets/accounts. Two exports each with their own

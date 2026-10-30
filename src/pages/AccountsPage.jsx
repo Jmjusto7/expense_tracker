@@ -37,6 +37,14 @@ export default function AccountsPage() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [editAccountId, setEditAccountId] = useState(null);
 
+  const handleRemoveAccount = async (accountId) => {
+    try {
+      await removeAccount(accountId);
+    } catch (err) {
+      alert(err.message || "Failed to delete account.");
+    }
+  };
+
   const totalBalance = useMemo(
     () => getTotalBalance(assetAccounts, balanceEntries),
     [assetAccounts, balanceEntries]
@@ -96,7 +104,7 @@ export default function AccountsPage() {
           </button>
 
           <ConfirmButton
-            onConfirm={() => removeAccount(account.id)}
+            onConfirm={() => handleRemoveAccount(account.id)}
             className="bg-surface border border-border text-ink-muted hover:text-alert rounded-md p-1.5"
             confirmClassName="bg-alert text-white border border-alert rounded-md p-1.5 text-xs font-medium px-2"
             title="Delete account? Removes all its income and reconciliation history."
@@ -116,11 +124,10 @@ export default function AccountsPage() {
         {/* Type badge */}
         <div className="mb-2">
           <span
-            className={`text-xs px-2 py-0.5 rounded-full border ${
-              typeName
+            className={`text-xs px-2 py-0.5 rounded-full border ${typeName
                 ? "bg-ledger-soft text-ledger-dark border-ledger/30"
                 : "bg-surface-sunken text-ink-muted border-border"
-            }`}
+              }`}
           >
             {typeName || "Unclassified"}
           </span>
@@ -209,7 +216,7 @@ export default function AccountsPage() {
               <Pencil size={12} />
             </button>
             <ConfirmButton
-              onConfirm={() => removeAccount(account.id)}
+              onConfirm={() => handleRemoveAccount(account.id)}
               className="text-ink-muted hover:text-alert p-1"
               confirmClassName="text-alert text-[10px] font-medium px-1"
               title="Delete account? Removes all its income and reconciliation history."

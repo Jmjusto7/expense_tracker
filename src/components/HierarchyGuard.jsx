@@ -6,17 +6,16 @@ export default function HierarchyGuard({ children }) {
   const navigate = useNavigate();
   const { year: yearParam, month: monthParam, travelId, accountId, liabilityId } = useParams();
 
-  const { years, travels, accounts } = useExpenseContext();
+  const { isLoaded, years, travels, accounts } = useExpenseContext();
 
   useEffect(() => {
+    if (!isLoaded) return;
+
     // =============================
     // ACCOUNT DETAIL VALIDATION
     // =============================
     if (accountId) {
-      if (!accounts) return; // wait for load
-
-      const numericAccountId = Number(accountId);
-      const match = accounts.find((a) => a.id === numericAccountId);
+      const match = accounts.find((a) => String(a.id) === accountId);
 
       // A liability opened via /assets/:id (e.g. a stale bookmark from
       // before it was marked a liability) belongs on its own page instead
@@ -24,7 +23,7 @@ export default function HierarchyGuard({ children }) {
       if (!match) {
         navigate("/assets", { replace: true });
       } else if (match.isLiability) {
-        navigate(`/liabilities/${numericAccountId}`, { replace: true });
+        navigate(`/liabilities/${accountId}`, { replace: true });
       }
 
       return;
@@ -34,15 +33,12 @@ export default function HierarchyGuard({ children }) {
     // LIABILITY DETAIL VALIDATION
     // =============================
     if (liabilityId) {
-      if (!accounts) return; // wait for load
-
-      const numericLiabilityId = Number(liabilityId);
-      const match = accounts.find((a) => a.id === numericLiabilityId);
+      const match = accounts.find((a) => String(a.id) === liabilityId);
 
       if (!match) {
         navigate("/liabilities", { replace: true });
       } else if (!match.isLiability) {
-        navigate(`/assets/${numericLiabilityId}`, { replace: true });
+        navigate(`/assets/${liabilityId}`, { replace: true });
       }
 
       return;
@@ -52,12 +48,8 @@ export default function HierarchyGuard({ children }) {
     // TRAVEL DETAIL VALIDATION
     // =============================
     if (travelId) {
-      if (!travels) return; // wait for load
-
-      const numericTravelId = Number(travelId);
-
       const exists = travels.some(
-        (t) => t.id === numericTravelId
+        (t) => String(t.id) === travelId
       );
 
       if (!exists) {
@@ -70,11 +62,6 @@ export default function HierarchyGuard({ children }) {
     // =============================
     // EXPENSE HIERARCHY VALIDATION
     // =============================
-    if (!years || years.length === 0) {
-      navigate("/", { replace: true });
-      return;
-    }
-
     if (yearParam) {
       const yearObj = years.find(
         (y) => y.year === parseInt(yearParam, 10)
@@ -97,7 +84,8 @@ export default function HierarchyGuard({ children }) {
         }
       }
     }
-  }, [years, travels, accounts, yearParam, monthParam, travelId, accountId, liabilityId, navigate]);
+  }, [isLoaded, years, travels, accounts, yearParam, monthParam, travelId, accountId, liabilityId, navigate]);
 
+  if (!isLoaded) return <div role="status">Loading...</div>;
   return children;
 }

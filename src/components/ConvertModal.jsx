@@ -98,7 +98,7 @@ export default function ConvertModal({ accountId, onClose }) {
         fee: fee !== "" ? Number(fee) : null,
         feeCategory: feeCategory.trim() || null,
         comments: comments.trim(),
-        sourceAccountId: sourceAccountId ? Number(sourceAccountId) : null,
+        sourceAccountId: sourceAccountId || null,
       });
       onClose();
     } catch (err) {
@@ -199,14 +199,12 @@ export default function ConvertModal({ accountId, onClose }) {
               role="switch"
               aria-checked={feeIncludedInTotal}
               onClick={() => setFeeIncludedInTotal((v) => !v)}
-              className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${
-                feeIncludedInTotal ? "bg-ledger" : "bg-border"
-              }`}
+              className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${feeIncludedInTotal ? "bg-ledger" : "bg-border"
+                }`}
             >
               <span
-                className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${
-                  feeIncludedInTotal ? "translate-x-5" : ""
-                }`}
+                className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${feeIncludedInTotal ? "translate-x-5" : ""
+                  }`}
               />
             </button>
           </div>
@@ -259,9 +257,8 @@ export default function ConvertModal({ accountId, onClose }) {
             <>
               <div className="bg-ledger-soft rounded-md px-3 py-2 text-sm text-ledger-dark">
                 {feePhpPreview !== null
-                  ? `Will log an expense: ${formatCurrency(feePhpPreview)}${
-                      costCurrencyAccount ? ` (${fee} ${costCurrencyLabel} converted)` : ""
-                    }`
+                  ? `Will log an expense: ${formatCurrency(feePhpPreview)}${costCurrencyAccount ? ` (${fee} ${costCurrencyLabel} converted)` : ""
+                  }`
                   : "Can't preview yet - this account has no price/rate history to convert the fee with."}
               </div>
 

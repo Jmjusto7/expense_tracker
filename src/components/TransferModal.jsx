@@ -54,9 +54,12 @@ export default function TransferModal({ accountId, onClose, mode = "outgoing" })
     if (fee !== "" && (isNaN(Number(fee)) || Number(fee) < 0))
       return setError(`Please enter a valid fee, in ${unitLabel}, or leave it blank.`);
 
+    if (fee !== "" && Number(fee) >= n)
+      return setError("The fee must be less than the transfer amount.");
+
     try {
-      const fromId = isIncoming ? Number(counterpartId) : accountId;
-      const toId = isIncoming ? accountId : Number(counterpartId);
+      const fromId = isIncoming ? counterpartId : accountId;
+      const toId = isIncoming ? accountId : counterpartId;
       await addTransfer(fromId, toId, {
         date,
         amount: n,

@@ -4,12 +4,14 @@ import DatePicker from "react-date-picker";
 import "react-date-picker/dist/DatePicker.css";
 import "react-calendar/dist/Calendar.css";
 import { useExpenseContext } from "../context/ExpenseContext";
-import { ALL_MONTHS, computeDefaultTransactionDate } from "../utils/dateHelpers";
+import { ALL_MONTHS, computeDefaultTransactionDate, formatDate } from "../utils/dateHelpers";
 import { parseAmountExpression } from "../utils/amountHelpers";
+import { findRowsTagConflict, tagConflictMessage } from "../utils/transactionMerge";
 import { useInlineAddTravel } from "../hooks/useInlineAddTravel";
 import CategoryAutocompleteInput from "./transaction-row/CategoryAutocompleteInput";
 import TravelSelectCell from "./transaction-row/TravelSelectCell";
 import AccountSelectCell from "./transaction-row/AccountSelectCell";
+import AmountPreview from "./AmountPreview";
 
 const getRowId = () => Date.now() + Math.floor(Math.random() * 1000);
 
@@ -37,12 +39,7 @@ export default function AddTransactionModal({
   onSaved,
 }) {
   const {
-    addYear,
-    addMonth,
-    addDay,
-    addTransaction,
-    getYearId,
-    getMonthId,
+    saveDayTransactions,
     categories,
     travels,
     accounts,
@@ -96,45 +93,36 @@ export default function AddTransactionModal({
     if (!validRows.length)
       return alert("Please fill at least one valid transaction.");
 
+    const upserts = [];
+    for (const r of validRows) {
+      const { total, breakdown, error } = parseAmountExpression(r.amount);
+      if (error) return alert(`Invalid amount in category "${r.category.trim()}": ${error}`);
+
+      upserts.push({
+        category: r.category.trim(),
+        amount: total,
+        amountBreakdown: breakdown,
+        comments: r.comments?.trim() || "",
+        travelId: r.travelId || null,
+        accountId: r.accountId || null,
+      });
+    }
+
+    const rowConflict = findRowsTagConflict(upserts);
+    if (rowConflict) {
+      return alert(
+        tagConflictMessage({
+          category: rowConflict.category,
+          dateLabel: formatDate(effectiveDate),
+          conflict: rowConflict.conflict,
+          travels,
+          accounts,
+        })
+      );
+    }
+
     try {
-      let yearId, monthId;
-
-      if (quickAdd) {
-        // Resolve/create on demand - addYear/addMonth are already
-        // idempotent (return the existing id if one matches), so this is
-        // safe to call regardless of whether the picked date's year/month
-        // already exist.
-        const effectiveYear = effectiveDate.getFullYear();
-        const effectiveMonthName = ALL_MONTHS[effectiveDate.getMonth()];
-        yearId = await addYear(effectiveYear);
-        monthId = await addMonth(yearId, effectiveMonthName);
-      } else {
-        yearId = await getYearId(year);
-        monthId = await getMonthId(yearId, month);
-
-        if (!yearId || !monthId) {
-          alert("Year or month not found in database.");
-          return;
-        }
-      }
-
-      const dayId = await addDay(yearId, monthId, effectiveDate.getDate());
-
-      for (const r of validRows) {
-        const { total, breakdown } = parseAmountExpression(r.amount);
-
-        if (isNaN(total))
-          return alert(`Invalid amount in category "${r.category}"`);
-
-        await addTransaction(yearId, monthId, dayId, {
-          category: r.category.trim(),
-          amount: total,
-          amountBreakdown: breakdown,
-          comments: r.comments?.trim() || "",
-          travelId: r.travelId || null,
-          accountId: r.accountId || null,
-        });
-      }
+      await saveDayTransactions({ date: effectiveDate, upserts });
 
       onSaved?.({
         year: quickAdd ? effectiveDate.getFullYear() : year,
@@ -143,7 +131,7 @@ export default function AddTransactionModal({
       onClose();
     } catch (err) {
       console.error("Failed to save transactions:", err);
-      alert("Failed to save transactions.");
+      alert(err.message || "Failed to save transactions.");
     }
   };
 
@@ -201,15 +189,15 @@ export default function AddTransactionModal({
                 format="y-MM-dd"
                 isOpen={isCalendarOpen}
                 calendarProps={{
-                activeStartDate: selectedDate || monthStart,
-                tileDisabled: ({ date, view }) => {
-                  if (view !== "month") return false;
-                  return date.getFullYear() === year &&
-                         date.getMonth() === monthIndex &&
-                         existingDays.includes(date.getDate());
-                },
-              }}
-            />
+                  activeStartDate: selectedDate || monthStart,
+                  tileDisabled: ({ date, view }) => {
+                    if (view !== "month") return false;
+                    return date.getFullYear() === year &&
+                      date.getMonth() === monthIndex &&
+                      existingDays.includes(date.getDate());
+                  },
+                }}
+              />
             )}
           </div>
 
@@ -251,6 +239,7 @@ export default function AddTransactionModal({
                         className="money w-full border border-border rounded-md px-2 py-1.5 text-sm bg-transparent text-ink focus:ring-2 focus:ring-ledger focus:outline-none disabled:opacity-50"
                         disabled={!hasDate}
                       />
+                      <AmountPreview value={r.amount} />
                     </td>
 
                     {/* TRAVEL SELECT */}

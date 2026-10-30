@@ -10,6 +10,7 @@ import AccountsPage from "./pages/AccountsPage";
 import AccountDetailPage from "./pages/AccountDetailPage";
 import LiabilitiesPage from "./pages/LiabilitiesPage";
 import LiabilityDetailPage from "./pages/LiabilityDetailPage";
+import NotFoundPage from "./pages/NotFoundPage";
 import HierarchyGuard from "./components/HierarchyGuard";
 
 export default function AppRoutes() {
@@ -82,6 +83,8 @@ export default function AppRoutes() {
           </HierarchyGuard>
         }
       />
+
+      <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );
 }

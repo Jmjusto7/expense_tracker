@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { Bell } from "lucide-react";
 import { useExpenseContext } from "../context/ExpenseContext";
-import { ALL_MONTHS, formatDate } from "../utils/dateHelpers";
+import { ALL_MONTHS } from "../utils/dateHelpers";
 import { daysSinceLastReconciliation, getStatementInfo } from "../utils/balanceHelpers";
 import { buildMonthlyIncomeExpense, findMonthRow } from "../utils/incomeExpenseHelpers";
 import NetWorthHeroCard from "../components/NetWorthHeroCard";

@@ -41,8 +41,8 @@ export default function AccountDetailPage() {
   const [showTransfer, setShowTransfer] = useState(false);
   const [deleteError, setDeleteError] = useState("");
 
-  const numericId = Number(accountId);
-  const account = accounts.find((a) => a.id === numericId);
+  const account = accounts.find((a) => String(a.id) === accountId);
+  const currentAccountId = account?.id;
 
   if (!account) {
     return (
@@ -59,12 +59,12 @@ export default function AccountDetailPage() {
     : null;
   const costCurrencyLabel = costCurrencyAccount ? costCurrencyAccount.unit : "PHP";
 
-  const currentBalance = getCurrentBalance(balanceEntries, numericId);
-  const phpValue = isForeign ? getCurrentValuePhp(balanceEntries, accounts, numericId) : currentBalance;
+  const currentBalance = getCurrentBalance(balanceEntries, currentAccountId);
+  const phpValue = isForeign ? getCurrentValuePhp(balanceEntries, accounts, currentAccountId) : currentBalance;
 
-  const avgCost = isForeign ? getAverageCost(balanceEntries, numericId) : null;
-  const currentPrice = isForeign ? getLatestPrice(balanceEntries, numericId) : null;
-  const gainLoss = isForeign ? getUnrealizedGainLoss(balanceEntries, numericId) : null;
+  const avgCost = isForeign ? getAverageCost(balanceEntries, currentAccountId) : null;
+  const currentPrice = isForeign ? getLatestPrice(balanceEntries, currentAccountId) : null;
+  const gainLoss = isForeign ? getUnrealizedGainLoss(balanceEntries, currentAccountId) : null;
 
   // Only worth showing as its own line when it's a genuinely different
   // number from phpValue above - a one-hop account (costCurrencyLabel ===
@@ -72,13 +72,13 @@ export default function AccountDetailPage() {
   // figure, so this is specifically for two-hop accounts like VOO (priced
   // in IBKR USD, which is itself priced in PHP) where "worth in USD" and
   // "worth in PHP" are two genuinely different, both-useful numbers.
-  const costCurrencyValue = isForeign ? getValueInCostCurrency(balanceEntries, numericId) : null;
+  const costCurrencyValue = isForeign ? getValueInCostCurrency(balanceEntries, currentAccountId) : null;
   const showCostCurrencyValue = isForeign && costCurrencyLabel !== "PHP";
 
-  const investmentHistory = isForeign ? buildInvestmentHistory(balanceEntries, numericId) : [];
+  const investmentHistory = isForeign ? buildInvestmentHistory(balanceEntries, currentAccountId) : [];
 
-  const staleDays = daysSinceLastReconciliation(balanceEntries, numericId);
-  const periods = getImpliedSpendPeriods(balanceEntries, numericId);
+  const staleDays = daysSinceLastReconciliation(balanceEntries, currentAccountId);
+  const periods = getImpliedSpendPeriods(balanceEntries, currentAccountId);
   const lastPeriod = periods.length > 0 ? periods[periods.length - 1] : null;
 
   // Most recent first, for the history table. Excludes "expense" - the
@@ -87,7 +87,7 @@ export default function AccountDetailPage() {
   // already visible on the Expenses tab; History stays limited to actions
   // taken directly on this account (income, reconcile, convert, transfer,
   // price updates).
-  const entries = getAccountEntriesSorted(balanceEntries, numericId)
+  const entries = getAccountEntriesSorted(balanceEntries, currentAccountId)
     .filter((e) => e.type !== "expense")
     .slice()
     .reverse();
@@ -316,7 +316,7 @@ export default function AccountDetailPage() {
         <div className="text-xs text-ink-muted uppercase tracking-wide mb-3">
           {isForeign ? "Units Over Time" : "Balance Over Time"}
         </div>
-        <AccountBalanceChart entries={balanceEntries} accountId={numericId} />
+        <AccountBalanceChart entries={balanceEntries} accountId={currentAccountId} />
       </div>
 
       {isForeign && investmentHistory.length > 0 && (
@@ -396,23 +396,23 @@ export default function AccountDetailPage() {
       </div>
 
       {showAddIncome && (
-        <AddIncomeModal accountId={numericId} onClose={() => setShowAddIncome(false)} />
+        <AddIncomeModal accountId={currentAccountId} onClose={() => setShowAddIncome(false)} />
       )}
 
       {showConvert && (
-        <ConvertModal accountId={numericId} onClose={() => setShowConvert(false)} />
+        <ConvertModal accountId={currentAccountId} onClose={() => setShowConvert(false)} />
       )}
 
       {showUpdatePrice && (
-        <UpdatePriceModal accountId={numericId} onClose={() => setShowUpdatePrice(false)} />
+        <UpdatePriceModal accountId={currentAccountId} onClose={() => setShowUpdatePrice(false)} />
       )}
 
       {showReconcile && (
-        <ReconcileBalanceModal accountId={numericId} onClose={() => setShowReconcile(false)} />
+        <ReconcileBalanceModal accountId={currentAccountId} onClose={() => setShowReconcile(false)} />
       )}
 
       {showTransfer && (
-        <TransferModal accountId={numericId} onClose={() => setShowTransfer(false)} />
+        <TransferModal accountId={currentAccountId} onClose={() => setShowTransfer(false)} />
       )}
     </div>
   );

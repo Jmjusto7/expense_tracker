@@ -2,6 +2,7 @@ import { useState } from "react";
 import CategoryBucketing from "./settings/CategoryBucketing";
 import AccountTypes from "./settings/AccountTypes";
 import ClearDBTab from "./settings/ClearDB";
+import SyncTab from "./settings/Sync";
 
 const SettingsPage = () => {
   const [tab, setTab] = useState("bucketing");
@@ -9,8 +10,7 @@ const SettingsPage = () => {
   const tabs = [
     { id: "bucketing", label: "Category Bucketing" },
     { id: "accountTypes", label: "Account Types" },
-    { id: "presets", label: "Presets" },
-    { id: "others", label: "Others" },
+    { id: "sync", label: "Sync" },
     { id: "clearDB", label: "Clear DB" },
   ];
 
@@ -26,11 +26,10 @@ const SettingsPage = () => {
               <button
                 key={t.id}
                 onClick={() => setTab(t.id)}
-                className={`text-left px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                  tab === t.id
-                    ? "bg-ledger-soft text-ledger-dark"
-                    : "text-ink-muted hover:bg-surface-sunken hover:text-ink"
-                }`}
+                className={`text-left px-3 py-2 rounded-md text-sm font-medium transition-colors ${tab === t.id
+                  ? "bg-ledger-soft text-ledger-dark"
+                  : "text-ink-muted hover:bg-surface-sunken hover:text-ink"
+                  }`}
               >
                 {t.label}
               </button>
@@ -42,8 +41,7 @@ const SettingsPage = () => {
         <div className="flex-1 bg-surface border border-border rounded-lg p-6">
           {tab === "bucketing" && <CategoryBucketing />}
           {tab === "accountTypes" && <AccountTypes />}
-          {tab === "presets" && <div className="text-ink-muted">Presets settings here…</div>}
-          {tab === "others" && <div className="text-ink-muted">Other settings here…</div>}
+          {tab === "sync" && <SyncTab />}
           {tab === "clearDB" && <ClearDBTab />}
         </div>
       </div>

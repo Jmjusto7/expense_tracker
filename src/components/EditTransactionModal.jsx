@@ -2,10 +2,12 @@ import { useState, useRef, useEffect } from "react";
 import { X } from "lucide-react";
 import { useExpenseContext } from "../context/ExpenseContext";
 import { parseAmountExpression } from "../utils/amountHelpers";
+import { findRowsTagConflict, tagConflictMessage } from "../utils/transactionMerge";
 import { useInlineAddTravel } from "../hooks/useInlineAddTravel";
 import CategoryAutocompleteInput from "./transaction-row/CategoryAutocompleteInput";
 import TravelSelectCell from "./transaction-row/TravelSelectCell";
 import AccountSelectCell from "./transaction-row/AccountSelectCell";
+import AmountPreview from "./AmountPreview";
 
 const generateRowId = () => Date.now() + Math.floor(Math.random() * 1000);
 
@@ -21,10 +23,7 @@ const blankRow = () => ({
 
 export default function EditTransactionModal({ year, month, day, dayId, transactions = [], onClose }) {
   const {
-    updateTransaction,
-    removeTransaction,
-    addTransaction,
-    removeDay,
+    saveDayTransactions,
     getYearId,
     getMonthId,
     travels,
@@ -41,14 +40,14 @@ export default function EditTransactionModal({ year, month, day, dayId, transact
     setRows(
       transactions.length
         ? transactions.map((t) => ({
-            id: t.id || generateRowId(),
-            category: t.category || "",
-            amount: t.amountBreakdown?.join(", ") || t.amount?.toString() || "",
-            comments: t.comments || "",
-            travelId: t.travelId || "",
-            accountId: t.accountId ?? null,
-            isNew: !t.id,
-          }))
+          id: t.id || generateRowId(),
+          category: t.category || "",
+          amount: t.amountBreakdown?.join(", ") || t.amount?.toString() || "",
+          comments: t.comments || "",
+          travelId: t.travelId || "",
+          accountId: t.accountId ?? null,
+          isNew: !t.id,
+        }))
         : [blankRow()]
     );
   }, [transactions]);
@@ -75,6 +74,41 @@ export default function EditTransactionModal({ year, month, day, dayId, transact
   };
 
   const handleSave = async () => {
+    const upserts = [];
+    for (const r of rows) {
+      if (!r.category.trim() || !r.amount.trim()) continue;
+
+      const { total, breakdown, error } = parseAmountExpression(r.amount);
+      if (error) {
+        alert(`Invalid amount in category "${r.category.trim()}": ${error}`);
+        return;
+      }
+
+      upserts.push({
+        ...(r.isNew ? {} : { id: r.id }),
+        category: r.category.trim(),
+        amount: total,
+        amountBreakdown: breakdown,
+        comments: r.comments.trim(),
+        travelId: r.travelId || null,
+        accountId: r.accountId || null,
+      });
+    }
+
+    const rowConflict = findRowsTagConflict(upserts);
+    if (rowConflict) {
+      alert(
+        tagConflictMessage({
+          category: rowConflict.category,
+          dateLabel: `${month} ${day}, ${year}`,
+          conflict: rowConflict.conflict,
+          travels,
+          accounts,
+        })
+      );
+      return;
+    }
+
     try {
       const yearId = await getYearId(year);
       const monthId = await getMonthId(yearId, month);
@@ -83,43 +117,11 @@ export default function EditTransactionModal({ year, month, day, dayId, transact
         return;
       }
 
-      for (const todel_id of deletedRows) {
-        await removeTransaction(todel_id);
-      }
-
-      for (const r of rows) {
-        if (!r.category.trim() || !r.amount.trim()) continue;
-
-        const { total, breakdown } = parseAmountExpression(r.amount);
-        if (isNaN(total)) {
-          alert(`Invalid amount in category "${r.category}". Use numbers separated by commas.`);
-          return;
-        }
-
-        const transactionData = {
-          category: r.category.trim(),
-          amount: total,
-          amountBreakdown: breakdown,
-          comments: r.comments.trim(),
-          travelId: r.travelId || null,
-          accountId: r.accountId || null,
-        };
-
-        if (r.isNew) {
-          await addTransaction(yearId, monthId, dayId, transactionData);
-        } else {
-          await updateTransaction(r.id, transactionData);
-        }
-      }
-
-      if (rows.length === 0) {
-        await removeDay(dayId);
-      }
-
+      await saveDayTransactions({ yearId, monthId, dayId, deletes: deletedRows, upserts });
       onClose();
     } catch (err) {
       console.error("Failed to save edited transactions:", err);
-      alert("Failed to save edited transactions. See console for details.");
+      alert(err.message || "Failed to save edited transactions. See console for details.");
     }
   };
 
@@ -171,6 +173,7 @@ export default function EditTransactionModal({ year, month, day, dayId, transact
                         placeholder="e.g. 195.5, -130, 25.25"
                         ref={(el) => (inputRefs.current[`amount-${r.id}`] = el)}
                       />
+                      <AmountPreview value={r.amount} />
                     </td>
 
                     {/* TRAVEL SELECT */}

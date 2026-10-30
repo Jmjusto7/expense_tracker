@@ -1,24 +1,49 @@
 // src/context/FilterContext.jsx
 import { createContext, useContext, useState, useMemo, useEffect } from "react";
 import { useExpenseContext } from "./ExpenseContext";
-import { useBucketsWithCategories } from "../hooks/useBucketsWithCategories";
+import { useBucketsWithCategoriesState } from "../hooks/useBucketsWithCategories";
 import { transactionMatchesFilter, transactionMatchesDate } from "../utils/transactionFilter";
 import { classifyTransactions, getAvailableCategories } from "../utils/transactionClassification";
 import { TRAVEL_FILTER_ID } from "../utils/travelHelpers";
 
 const FilterContext = createContext();
 
-export function FilterProvider({ children }) {
-  const { allTransactions } = useExpenseContext();
-  const buckets = useBucketsWithCategories();
+// v2: bucket ids became UUIDs, so filters saved with numeric ids are dropped.
+export const FILTER_STORAGE_KEY = "tracker.filters.v2";
 
-  const [fromDate, setFromDate] = useState(null);
-  const [toDate, setToDate] = useState(null);
-  const [selectedBucketIds, setSelectedBucketIds] = useState([]);
-  const [selectedCategoryFilters, setSelectedCategoryFilters] = useState([]);
+const toDateOrNull = (value) => {
+  if (!value) return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+};
+
+function loadStoredFilters() {
+  try {
+    const stored = JSON.parse(sessionStorage.getItem(FILTER_STORAGE_KEY) || "{}");
+    return {
+      fromDate: toDateOrNull(stored.fromDate),
+      toDate: toDateOrNull(stored.toDate),
+      selectedBucketIds: Array.isArray(stored.selectedBucketIds) ? stored.selectedBucketIds : [],
+      selectedCategoryFilters: Array.isArray(stored.selectedCategoryFilters) ? stored.selectedCategoryFilters : [],
+      travelDrillBucketId: stored.travelDrillBucketId ?? null,
+    };
+  } catch {
+    return {};
+  }
+}
+
+export function FilterProvider({ children }) {
+  const { allTransactions, isLoaded } = useExpenseContext();
+  const { buckets, loaded: bucketsLoaded } = useBucketsWithCategoriesState();
+
+  const [stored] = useState(loadStoredFilters);
+  const [fromDate, setFromDate] = useState(stored.fromDate ?? null);
+  const [toDate, setToDate] = useState(stored.toDate ?? null);
+  const [selectedBucketIds, setSelectedBucketIds] = useState(stored.selectedBucketIds ?? []);
+  const [selectedCategoryFilters, setSelectedCategoryFilters] = useState(stored.selectedCategoryFilters ?? []);
   // For Travel 3-level drill-down: Travel -> Bucket -> Category
   // When Travel is selected, this holds the bucket ID within Travel to filter by
-  const [travelDrillBucketId, setTravelDrillBucketId] = useState(null);
+  const [travelDrillBucketId, setTravelDrillBucketId] = useState(stored.travelDrillBucketId ?? null);
 
   // Is Travel filter currently active?
   const isTravelSelected = selectedBucketIds.includes(TRAVEL_FILTER_ID);
@@ -27,12 +52,24 @@ export function FilterProvider({ children }) {
     fromDate || toDate || selectedBucketIds.length > 0 || selectedCategoryFilters.length > 0 || travelDrillBucketId
   );
 
+  useEffect(() => {
+    if (!hasActiveFilters) {
+      sessionStorage.removeItem(FILTER_STORAGE_KEY);
+      return;
+    }
+    sessionStorage.setItem(
+      FILTER_STORAGE_KEY,
+      JSON.stringify({ fromDate, toDate, selectedBucketIds, selectedCategoryFilters, travelDrillBucketId })
+    );
+  }, [hasActiveFilters, fromDate, toDate, selectedBucketIds, selectedCategoryFilters, travelDrillBucketId]);
+
   const clearFilters = () => {
     setFromDate(null);
     setToDate(null);
     setSelectedBucketIds([]);
     setSelectedCategoryFilters([]);
     setTravelDrillBucketId(null);
+    sessionStorage.removeItem(FILTER_STORAGE_KEY);
   };
 
   const clearDateRange = () => {
@@ -62,7 +99,7 @@ export function FilterProvider({ children }) {
   // ExpenseAnalytics should use.
   const matches = useMemo(() => {
     return (t) => transactionMatchesFilter(t, filterState);
-  }, [fromDate, toDate, selectedBucketIds, selectedCategoryFilters, buckets]);
+  }, [fromDate, toDate, selectedBucketIds, selectedCategoryFilters, buckets, travelDrillBucketId]);
 
   // Date-only match - ExpenseAnalytics needs this stage in isolation to
   // compute available categories before bucket/category narrowing is applied.
@@ -94,6 +131,9 @@ export function FilterProvider({ children }) {
   // the current date range or selected bucket scope, drop it rather than
   // silently filtering to nothing. Uses classification for scope awareness.
   useEffect(() => {
+    // Restored filters would be wiped against still-empty data.
+    if (!isLoaded || !bucketsLoaded) return;
+
     // For Travel -> Bucket -> Category, use travel-scoped transactions
     if (isTravelSelected && travelDrillBucketId) {
       const scopedToTravelBucket = travelScopedClassifiedTx.filter(
@@ -108,7 +148,7 @@ export function FilterProvider({ children }) {
       getAvailableCategories(classifiedTx, selectedBucketIds)
     );
     setSelectedCategoryFilters((prev) => prev.filter((cat) => available.has(cat)));
-  }, [classifiedTx, selectedBucketIds, isTravelSelected, travelDrillBucketId, travelScopedClassifiedTx]);
+  }, [isLoaded, bucketsLoaded, classifiedTx, selectedBucketIds, isTravelSelected, travelDrillBucketId, travelScopedClassifiedTx]);
 
   const value = {
     buckets,

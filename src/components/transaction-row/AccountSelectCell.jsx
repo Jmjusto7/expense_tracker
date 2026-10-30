@@ -20,7 +20,7 @@ export default function AccountSelectCell({ value, onChange, accounts, disabled 
       value={value ?? ""}
       onChange={(e) => {
         const val = e.target.value;
-        onChange(val ? Number(val) : null);
+        onChange(val || null);
       }}
       disabled={disabled}
       className="w-full border border-border rounded-md px-2 py-1.5 text-sm bg-surface text-ink focus:ring-2 focus:ring-ledger focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"

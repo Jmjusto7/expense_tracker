@@ -2,24 +2,21 @@
 import { createContext, useContext, useEffect, useState, useMemo } from "react";
 import { db } from "./db";
 import { normalizeTravelId } from "../utils/travelHelpers";
-import { validateImportShape } from "../utils/importValidation";
-import {
-  findDuplicateGroups,
-  buildDayLookup,
-  transactionFingerprint,
-  yearFingerprint,
-  monthFingerprint,
-  dayFingerprint,
-  bucketFingerprint,
-  bucketAssignmentFingerprint,
-  accountFingerprint,
-  accountTypeFingerprint,
-  balanceEntryFingerprint,
-} from "../utils/importDedup";
+import { validateImportShape, MAX_IMPORT_BYTES } from "../utils/importValidation";
+import { IMPORT_TABLES, planImport, applyImportResolutions, sameConflicts } from "../utils/importPlan";
+import { needsRekey, rekeyTables } from "../utils/rekey";
+import { shadowEntryFor, buildShadowEntries } from "../utils/shadowEntries";
+import { getAccessToken, clearAccessToken, revokeAccess } from "../sync/googleAuth";
+import * as drive from "../sync/driveClient";
+import { buildSnapshot, parseSnapshot, hashTables, hashRecord } from "../sync/snapshot";
+import { mergeSnapshots, applyRecordResolutions } from "../sync/mergeSnapshots";
 import { isOldestReconciliation, getCurrentBalance, getCurrentValuePhp } from "../utils/balanceHelpers";
-import { ALL_MONTHS } from "../utils/dateHelpers";
+import { ALL_MONTHS, formatDate } from "../utils/dateHelpers";
+import { findTagConflict, tagConflictMessage, mergeTransactionRows } from "../utils/transactionMerge";
 
 const ExpenseContext = createContext();
+
+const SYNC_STATE_KEY = "drive";
 
 // Wraps a mutating DB operation so every write path logs and rethrows
 // consistently, instead of some methods having try/catch and others not.
@@ -33,6 +30,10 @@ const withErrorHandling = (label, fn) => async (...args) => {
     throw err;
   }
 };
+
+// Runs fn as a (sub-)transaction so callers await a Dexie promise. Awaiting a
+// bare native async helper inside a transaction can drop Dexie's zone.
+const inTx = (fn) => (...args) => db.transaction("rw", db.tables, () => fn(...args));
 
 // Flattens the Year -> Month -> Day -> Transaction hierarchy into a single
 // list. This walk was previously reimplemented independently in
@@ -50,6 +51,8 @@ export function ExpenseProvider({ children }) {
   const [accounts, setAccounts] = useState([]);
   const [balanceEntries, setBalanceEntries] = useState([]);
   const [accountTypes, setAccountTypes] = useState([]);
+  const [isLoaded, setIsLoaded] = useState(false);
+  const [syncStatus, setSyncStatus] = useState(null);
 
   // ---------------------------
   // Load full hierarchy from DB
@@ -97,10 +100,6 @@ export function ExpenseProvider({ children }) {
     setTravels(allTravels);
   };
 
-  useEffect(() => {
-    reloadHierarchy();
-  }, []);
-
   // ---------------------------
   // Load Assets (accounts + balanceEntries) - kept as its own reload,
   // separate from reloadHierarchy, since Assets are deliberately
@@ -119,76 +118,124 @@ export function ExpenseProvider({ children }) {
   };
 
   useEffect(() => {
-    reloadAssets();
+    let active = true;
+    Promise.all([reloadHierarchy(), reloadAssets()]).then(() => {
+      if (active) setIsLoaded(true);
+    });
+    db.syncState.get(SYNC_STATE_KEY).then((state) => {
+      if (active && state) setSyncStatus({ lastSyncedAt: state.lastSyncedAt });
+    });
+    return () => {
+      active = false;
+    };
   }, []);
 
   // Single computed flat list of every transaction, derived from `years`.
   // Exposed so pages don't each re-flatten the hierarchy themselves.
   const allTransactions = useMemo(() => flattenTransactions(years), [years]);
 
+  // Runs fn in one Dexie transaction across every table, then reloads state
+  // once after commit. fn must only await Dexie promises.
+  const atomic = (label, fn) =>
+    withErrorHandling(label, async (...args) => {
+      const result = await db.transaction("rw", db.tables, () => fn(...args));
+      await Promise.all([reloadHierarchy(), reloadAssets()]);
+      return result;
+    });
+
+  // Idempotent, non-reloading year/month/day lookups for use inside batches.
+  const ensureYear = inTx(async (yearNumber) => {
+    const existing = await db.years.where({ year: yearNumber }).first();
+    if (existing) return existing.id;
+    return await db.years.add({ year: yearNumber, createdAt: new Date() });
+  });
+
+  const ensureMonth = inTx(async (yearId, name) => {
+    const existing = await db.months.where("[yearId+name]").equals([yearId, name]).first();
+    if (existing) return existing.id;
+    return await db.months.add({ yearId, name, createdAt: new Date() });
+  });
+
+  const ensureDay = inTx(async (yearId, monthId, dayNumber) => {
+    const existing = await db.days
+      .where("[yearId+monthId+day]")
+      .equals([yearId, monthId, dayNumber])
+      .first();
+    if (existing) return existing.id;
+    return await db.days.add({ yearId, monthId, day: dayNumber, createdAt: new Date() });
+  });
+
   // ---------------------------
   // Year operations
   // ---------------------------
   const addYear = withErrorHandling("addYear", async (yearNumber) => {
-    const existing = await db.years.where({ year: yearNumber }).first();
-    if (existing) return existing.id;
-
-    const yearId = await db.years.add({ year: yearNumber, createdAt: new Date() });
+    const yearId = await ensureYear(yearNumber);
     await reloadHierarchy();
     return yearId;
   });
 
   const removeYear = withErrorHandling("removeYear", async (yearId) => {
-    const monthsToDelete = await db.months.where({ yearId }).toArray();
-    for (const m of monthsToDelete) await removeMonth(m.id);
-    await db.years.delete(yearId);
+    await db.transaction("rw", db.tables, async () => {
+      const transactions = await db.transactions.where({ yearId }).toArray();
+      const transactionIds = new Set(transactions.map((t) => t.id));
+      const shadows = await db.balanceEntries
+        .filter((e) => e.type === "expense" && transactionIds.has(e.sourceTransactionId))
+        .toArray();
+      await db.balanceEntries.bulkDelete(shadows.map((e) => e.id));
+      await db.transactions.where({ yearId }).delete();
+      await db.days.where({ yearId }).delete();
+      await db.months.where({ yearId }).delete();
+      await db.years.delete(yearId);
+    });
     await reloadHierarchy();
+    await reloadAssets();
   });
 
   // ---------------------------
   // Month operations
   // ---------------------------
   const addMonth = withErrorHandling("addMonth", async (yearId, name) => {
-    const existing = await db.months
-      .where("[yearId+name]")
-      .equals([yearId, name])
-      .first();
-    if (existing) return existing.id;
-
-    const monthId = await db.months.add({ yearId, name, createdAt: new Date() });
+    const monthId = await ensureMonth(yearId, name);
     await reloadHierarchy();
     return monthId;
   });
 
   const removeMonth = withErrorHandling("removeMonth", async (monthId) => {
-    const daysToDelete = await db.days.where({ monthId }).toArray();
-    for (const d of daysToDelete) await removeDay(d.id);
-    await db.months.delete(monthId);
+    await db.transaction("rw", db.tables, async () => {
+      const transactions = await db.transactions.where({ monthId }).toArray();
+      const transactionIds = new Set(transactions.map((t) => t.id));
+      const shadows = await db.balanceEntries
+        .filter((e) => e.type === "expense" && transactionIds.has(e.sourceTransactionId))
+        .toArray();
+      await db.balanceEntries.bulkDelete(shadows.map((e) => e.id));
+      await db.transactions.where({ monthId }).delete();
+      await db.days.where({ monthId }).delete();
+      await db.months.delete(monthId);
+    });
     await reloadHierarchy();
+    await reloadAssets();
   });
 
   // ---------------------------
   // Day operations
   // ---------------------------
   const addDay = withErrorHandling("addDay", async (yearId, monthId, dayNumber) => {
-    const existing = await db.days
-      .where("[yearId+monthId+day]")
-      .equals([yearId, monthId, dayNumber])
-      .first();
-    if (existing) return existing.id;
-
-    const dayId = await db.days.add({ yearId, monthId, day: dayNumber, createdAt: new Date() });
+    const dayId = await ensureDay(yearId, monthId, dayNumber);
     await reloadHierarchy();
     return dayId;
   });
 
   const removeDay = withErrorHandling("removeDay", async (dayId) => {
-    const transactionsToDelete = await db.transactions.where({ dayId }).toArray();
-    await db.transactions.where({ dayId }).delete();
-    for (const t of transactionsToDelete) {
-      await syncShadowExpenseEntry(t.id); // rows are already gone - this just cleans up any shadow
-    }
-    await db.days.delete(dayId);
+    await db.transaction("rw", db.tables, async () => {
+      const transactions = await db.transactions.where({ dayId }).toArray();
+      const transactionIds = new Set(transactions.map((t) => t.id));
+      const shadows = await db.balanceEntries
+        .filter((e) => e.type === "expense" && transactionIds.has(e.sourceTransactionId))
+        .toArray();
+      await db.balanceEntries.bulkDelete(shadows.map((e) => e.id));
+      await db.transactions.where({ dayId }).delete();
+      await db.days.delete(dayId);
+    });
     await reloadHierarchy();
     await reloadAssets();
   });
@@ -199,7 +246,7 @@ export function ExpenseProvider({ children }) {
   // computed in reloadHierarchy(), which a mid-write helper can't rely on
   // being fresh. Returns null if any of the three rows is missing (never
   // trusts stored ids blindly).
-  const resolveTransactionDate = async (yearId, monthId, dayId) => {
+  const resolveTransactionDate = inTx(async (yearId, monthId, dayId) => {
     const [year, month, day] = await Promise.all([
       db.years.get(yearId),
       db.months.get(monthId),
@@ -207,7 +254,7 @@ export function ExpenseProvider({ children }) {
     ]);
     if (!year || !month || !day) return null;
     return new Date(year.year, ALL_MONTHS.indexOf(month.name), day.day);
-  };
+  });
 
   // Keeps a transaction's shadow "expense" balanceEntries row in sync with
   // whatever the transaction currently looks like (see db.js v8 / Balance
@@ -216,7 +263,7 @@ export function ExpenseProvider({ children }) {
   // incrementally, so the two can never quietly drift apart. A no-op if
   // there was no shadow and the transaction isn't linked either way.
   // Called after every add/update/delete on a transaction.
-  const syncShadowExpenseEntry = async (transactionId) => {
+  const syncShadowExpenseEntry = inTx(async (transactionId) => {
     const existingShadow = await db.balanceEntries
       .filter((e) => e.type === "expense" && e.sourceTransactionId === transactionId)
       .first();
@@ -228,103 +275,65 @@ export function ExpenseProvider({ children }) {
     const date = await resolveTransactionDate(transaction.yearId, transaction.monthId, transaction.dayId);
     if (!date) return; // orphaned year/month/day - shouldn't happen, but never assumed
 
-    await db.balanceEntries.add({
-      accountId: transaction.accountId,
-      date,
-      type: "expense",
-      amount: -Number(transaction.amount || 0),
-      balance: null,
-      costBasis: null,
-      fee: null,
-      pricePerUnit: null,
-      category: transaction.category || null,
-      comments: transaction.comments || "",
-      sourceTransactionId: transactionId,
-      createdAt: new Date(),
-    });
-  };
+    await db.balanceEntries.add(shadowEntryFor(transaction, date));
+  });
 
   // ---------------------------
   // Transaction operations
   // ---------------------------
-  const addTransaction = withErrorHandling(
-    "addTransaction",
-    async (yearId, monthId, dayId, transaction) => {
-      const existing = await db.transactions
-        .where("[yearId+monthId+dayId+category]")
-        .equals([yearId, monthId, dayId, transaction.category])
-        .first();
 
-      // Same day + category already has a row - e.g. two rows in one
-      // Add/Edit session both typed the same category, or a fresh add
-      // landing on a category the day already has. The unique index
-      // means this can never be a second row - merge into the existing
-      // row's amountBreakdown instead of silently discarding this one's
-      // amount/comments/travel/account, mirroring the merge
-      // addConvertEntry's fee-auto-logging already does for the same
-      // (yearId+monthId+dayId+category) collision.
-      if (existing) {
-        const existingBreakdown = existing.amountBreakdown?.length
-          ? existing.amountBreakdown
-          : [existing.amount];
-        const newBreakdown = transaction.amountBreakdown?.length
-          ? transaction.amountBreakdown
-          : [transaction.amount];
-        const mergedBreakdown = [...existingBreakdown, ...newBreakdown];
-
-        const mergedComments = [existing.comments, transaction.comments]
-          .filter((c) => c && c.trim())
-          .join("; ");
-
-        // Travel/account tags: keep the existing row's if it already has
-        // one, otherwise adopt the incoming row's - never silently drops
-        // a tag either side had.
-        await db.transactions.update(existing.id, {
-          amount: mergedBreakdown.reduce((sum, v) => sum + Number(v || 0), 0),
-          amountBreakdown: mergedBreakdown,
-          comments: mergedComments,
-          travelId: existing.travelId ?? normalizeTravelId(transaction.travelId),
-          accountId: existing.accountId ?? (transaction.accountId ?? null),
-        });
-
-        await syncShadowExpenseEntry(existing.id);
-        await reloadHierarchy();
-        await reloadAssets();
-        return existing.id;
-      }
-
-      const id = await db.transactions.add({
-        ...transaction,
-        yearId,
-        monthId,
-        dayId,
-        travelId: normalizeTravelId(transaction.travelId),
-        accountId: transaction.accountId ?? null,
-        createdAt: new Date(),
-      });
-
-      await syncShadowExpenseEntry(id);
-      await reloadHierarchy();
-      await reloadAssets();
-      return id;
+  // Merges `incoming` into the existing same-day/same-category row (the
+  // unique index allows only one) via amountBreakdown, refusing if their
+  // travel/account tags disagree.
+  const mergeIntoExisting = inTx(async (existing, incoming) => {
+    const conflict = findTagConflict(existing, incoming);
+    if (conflict) {
+      const [date, allTravels, allAccounts] = await Promise.all([
+        resolveTransactionDate(existing.yearId, existing.monthId, existing.dayId),
+        db.travels.toArray(),
+        db.accounts.toArray(),
+      ]);
+      throw new Error(
+        tagConflictMessage({
+          category: existing.category,
+          dateLabel: formatDate(date),
+          conflict,
+          travels: allTravels,
+          accounts: allAccounts,
+        })
+      );
     }
-  );
+    await db.transactions.update(existing.id, mergeTransactionRows(existing, incoming));
+    await syncShadowExpenseEntry(existing.id);
+    return existing.id;
+  });
 
-  const updateTransaction = withErrorHandling(
-    "updateTransaction",
-    async (transactionId, updatedFields) => {
-      const normalizedFields =
-        "travelId" in updatedFields
-          ? { ...updatedFields, travelId: normalizeTravelId(updatedFields.travelId) }
-          : updatedFields;
-      await db.transactions.update(transactionId, normalizedFields);
-      await syncShadowExpenseEntry(transactionId);
-      await reloadHierarchy();
-      await reloadAssets();
-    }
-  );
+  const findDayCategoryRow = (yearId, monthId, dayId, category) =>
+    db.transactions
+      .where("[yearId+monthId+dayId+category]")
+      .equals([yearId, monthId, dayId, category])
+      .first();
 
-  const removeTransaction = withErrorHandling("removeTransaction", async (transactionId) => {
+  // Non-reloading add-or-merge, for use inside a batch.
+  const writeTransaction = inTx(async (yearId, monthId, dayId, transaction) => {
+    const existing = await findDayCategoryRow(yearId, monthId, dayId, transaction.category);
+    if (existing) return mergeIntoExisting(existing, transaction);
+
+    const id = await db.transactions.add({
+      ...transaction,
+      yearId,
+      monthId,
+      dayId,
+      travelId: normalizeTravelId(transaction.travelId),
+      accountId: transaction.accountId ?? null,
+      createdAt: new Date(),
+    });
+    await syncShadowExpenseEntry(id);
+    return id;
+  });
+
+  // Non-reloading delete, for use inside a batch.
+  const deleteTransactionRow = inTx(async (transactionId) => {
     const tx = await db.transactions.get(transactionId);
     await db.transactions.delete(transactionId);
     await syncShadowExpenseEntry(transactionId); // transaction's gone - this just cleans up any shadow it had
@@ -340,10 +349,76 @@ export function ExpenseProvider({ children }) {
     for (const beId of feeSourceIds) {
       await db.balanceEntries.update(beId, { fee: null });
     }
-
-    await reloadHierarchy();
-    await reloadAssets();
   });
+
+  const addTransaction = atomic("addTransaction", (yearId, monthId, dayId, transaction) =>
+    writeTransaction(yearId, monthId, dayId, transaction)
+  );
+
+  const updateTransaction = atomic("updateTransaction", async (transactionId, updatedFields) => {
+    const normalizedFields =
+      "travelId" in updatedFields
+        ? { ...updatedFields, travelId: normalizeTravelId(updatedFields.travelId) }
+        : updatedFields;
+    await db.transactions.update(transactionId, normalizedFields);
+    await syncShadowExpenseEntry(transactionId);
+  });
+
+  const removeTransaction = atomic("removeTransaction", (transactionId) => deleteTransactionRow(transactionId));
+
+  // Saves one day's Add/Edit modal session in a single transaction: deletes,
+  // updates to existing rows (`id` set), and new rows (merged per category).
+  // Pass `date` instead of ids to resolve/create the year/month/day.
+  // Removes the day if it ends up empty.
+  const saveDayTransactions = atomic(
+    "saveDayTransactions",
+    async ({ yearId, monthId, dayId, date = null, deletes = [], upserts = [] }) => {
+      if (date) {
+        const d = new Date(date);
+        yearId = await ensureYear(d.getFullYear());
+        monthId = await ensureMonth(yearId, ALL_MONTHS[d.getMonth()]);
+        dayId = await ensureDay(yearId, monthId, d.getDate());
+      }
+
+      for (const id of deletes) await deleteTransactionRow(id);
+
+      const normalize = (fields) => ({
+        ...fields,
+        travelId: normalizeTravelId(fields.travelId),
+        accountId: fields.accountId ?? null,
+      });
+      const updates = upserts.filter((u) => u.id != null);
+      const inserts = upserts.filter((u) => u.id == null);
+
+      // Placeholder categories let rows swap categories without tripping the unique index.
+      for (const { id } of updates) {
+        await db.transactions.update(id, { category: `\u0000pending:${id}` });
+      }
+
+      for (const { id, ...fields } of updates) {
+        const normalized = normalize(fields);
+        const target = await findDayCategoryRow(yearId, monthId, dayId, normalized.category);
+        if (target) {
+          const current = await db.transactions.get(id);
+          await mergeIntoExisting(target, { ...current, ...normalized });
+          await db.transactions.delete(id);
+          await syncShadowExpenseEntry(id);
+        } else {
+          await db.transactions.update(id, normalized);
+          await syncShadowExpenseEntry(id);
+        }
+      }
+
+      for (const fields of inserts) {
+        await writeTransaction(yearId, monthId, dayId, normalize(fields));
+      }
+
+      const remaining = await db.transactions.where({ dayId }).count();
+      if (remaining === 0) await db.days.delete(dayId);
+
+      return { yearId, monthId, dayId };
+    }
+  );
 
   // ---------------------------
   // Travel operations
@@ -384,14 +459,6 @@ export function ExpenseProvider({ children }) {
     await db.travels.delete(normalizedId);
     await reloadHierarchy();
   });
-
-  const getTravelTransactions = withErrorHandling(
-    "getTravelTransactions",
-    async (travelId) => {
-      const normalizedId = normalizeTravelId(travelId);
-      return await db.transactions.where({ travelId: normalizedId }).toArray();
-    }
-  );
 
   // ---------------------------
   // Account operations (Assets feature)
@@ -467,7 +534,8 @@ export function ExpenseProvider({ children }) {
           pricePerUnit: null,
           category: null,
           comments: "Starting units",
-          createdAt: new Date(),
+          // Must sort after the same-day anchor reconciliation above.
+          createdAt: new Date(Date.now() + 1),
         });
       }
 
@@ -501,14 +569,44 @@ export function ExpenseProvider({ children }) {
   });
 
   const removeAccount = withErrorHandling("removeAccount", async (accountId) => {
-    // Cascade-delete balanceEntries, unlike Travel removal (which unlinks).
-    // An income/reconciliation entry - or a shadow "expense" entry for a
-    // transaction that was linked here - orphaned from its account isn't
-    // meaningful on its own the way a transaction is meaningful without an
-    // account tag - see plan §6. The real transactions survive, unlinked.
-    await db.balanceEntries.where({ accountId }).delete();
-    await db.transactions.where({ accountId }).modify({ accountId: null });
-    await db.accounts.delete(accountId);
+    await db.transaction("rw", db.tables, async () => {
+      const account = await db.accounts.get(accountId);
+      if (!account) return;
+
+      const allAccounts = await db.accounts.toArray();
+      const pricedAccounts = allAccounts.filter(
+        (a) => a.id !== accountId && a.costCurrencyAccountId === accountId
+      );
+      if (pricedAccounts.length) {
+        throw new Error(
+          `Can't delete: ${pricedAccounts.map((a) => a.name).join(", ")} are priced in this account. Reassign or delete them first.`
+        );
+      }
+
+      const allEntries = await db.balanceEntries.toArray();
+      const deletedEntries = allEntries.filter((e) => e.accountId === accountId);
+      const groups = new Set(
+        deletedEntries.map((e) => e.transferGroupId).filter(Boolean)
+      );
+      for (const transferGroupId of groups) {
+        const counterpartEntries = allEntries.filter(
+          (e) => e.transferGroupId === transferGroupId && e.accountId !== accountId
+        );
+        for (const entry of counterpartEntries) {
+          const suffix = ` (counterpart account '${account.name}' deleted)`;
+          await db.balanceEntries.update(entry.id, {
+            counterpartAccountId: null,
+            transferGroupId: null,
+            comments: `${entry.comments || ""}${suffix}`,
+          });
+        }
+      }
+
+      await cascadeRemoveFeeContributions(deletedEntries.map((e) => e.id));
+      await db.balanceEntries.bulkDelete(deletedEntries.map((e) => e.id));
+      await db.transactions.where({ accountId }).modify({ accountId: null });
+      await db.accounts.delete(accountId);
+    });
     await reloadAssets();
     await reloadHierarchy(); // transactions changed too (unlinked), not just assets
   });
@@ -596,7 +694,7 @@ export function ExpenseProvider({ children }) {
   // currency) at the same moment, so both sides of the conversion land in
   // one action. Omitting it keeps the old destination-only behavior
   // exactly as before - fully backward compatible.
-  const addConvertEntry = withErrorHandling(
+  const addConvertEntry = atomic(
     "addConvertEntry",
     async (accountId, { date, amount, costBasis, fee = null, feeCategory = null, comments, sourceAccountId = null }) => {
       const feeAmt = fee != null && fee !== "" ? Number(fee) : null;
@@ -719,9 +817,9 @@ export function ExpenseProvider({ children }) {
         const feeDate = new Date(date);
         const category = feeCategory?.trim() || "Fees";
 
-        const yearId = await addYear(feeDate.getFullYear());
-        const monthId = await addMonth(yearId, ALL_MONTHS[feeDate.getMonth()]);
-        const dayId = await addDay(yearId, monthId, feeDate.getDate());
+        const yearId = await ensureYear(feeDate.getFullYear());
+        const monthId = await ensureMonth(yearId, ALL_MONTHS[feeDate.getMonth()]);
+        const dayId = await ensureDay(yearId, monthId, feeDate.getDate());
 
         // The transactions table enforces one row per (day, category) -
         // merge into an existing same-day/same-category row (via the
@@ -766,11 +864,8 @@ export function ExpenseProvider({ children }) {
             createdAt: new Date(),
           });
         }
-
-        await reloadHierarchy();
       }
 
-      await reloadAssets();
       return id;
     }
   );
@@ -823,7 +918,7 @@ export function ExpenseProvider({ children }) {
   // merge into a same-day/same-category transaction" pattern as
   // addConvertEntry's fee handling. Omitting fee keeps the old behavior
   // exactly as before.
-  const addTransfer = withErrorHandling(
+  const addTransfer = atomic(
     "addTransfer",
     async (fromAccountId, toAccountId, { date, amount, comments, fee = null, feeCategory = null }) => {
       if (fromAccountId === toAccountId) {
@@ -844,6 +939,10 @@ export function ExpenseProvider({ children }) {
       const transferGroupId = `xfer_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
       const amt = Number(amount);
       const feeAmt = fee != null && fee !== "" ? Number(fee) : 0;
+      if (!Number.isFinite(amt) || amt <= 0) throw new Error("Transfer amount must be greater than zero.");
+      if (!Number.isFinite(feeAmt) || feeAmt < 0 || feeAmt >= amt) {
+        throw new Error("The fee must be less than the transfer amount.");
+      }
       const trimmedComments = comments?.trim() || "";
       const entryDate = new Date(date);
 
@@ -916,9 +1015,9 @@ export function ExpenseProvider({ children }) {
         const feeDate = entryDate;
         const category = feeCategory?.trim() || "Fees";
 
-        const yearId = await addYear(feeDate.getFullYear());
-        const monthId = await addMonth(yearId, ALL_MONTHS[feeDate.getMonth()]);
-        const dayId = await addDay(yearId, monthId, feeDate.getDate());
+        const yearId = await ensureYear(feeDate.getFullYear());
+        const monthId = await ensureMonth(yearId, ALL_MONTHS[feeDate.getMonth()]);
+        const dayId = await ensureDay(yearId, monthId, feeDate.getDate());
 
         const existingFeeTx = await db.transactions
           .where("[yearId+monthId+dayId+category]")
@@ -952,11 +1051,8 @@ export function ExpenseProvider({ children }) {
             createdAt: new Date(),
           });
         }
-
-        await reloadHierarchy();
       }
 
-      await reloadAssets();
       return { transferGroupId, outId, inId };
     }
   );
@@ -970,7 +1066,7 @@ export function ExpenseProvider({ children }) {
   // thing contributing to it. Not indexed (sourceBalanceEntryIds is a
   // plain array field, same precedent as transferGroupId/sourceTransactionId
   // elsewhere in this schema), so this filters in memory like those do.
-  const cascadeRemoveFeeContributions = async (deletedEntryIds) => {
+  const cascadeRemoveFeeContributions = inTx(async (deletedEntryIds) => {
     if (!deletedEntryIds || deletedEntryIds.length === 0) return;
     const allTx = await db.transactions.toArray();
     const affected = allTx.filter((t) =>
@@ -997,9 +1093,9 @@ export function ExpenseProvider({ children }) {
         sourceBalanceEntryIds: newSourceIds,
       });
     }
-  };
+  });
 
-  const removeBalanceEntry = withErrorHandling("removeBalanceEntry", async (entryId) => {
+  const removeBalanceEntry = atomic("removeBalanceEntry", async (entryId) => {
     // Fetch fresh from DB rather than trusting the balanceEntries closure -
     // same caution as cleanBucketAssignments below.
     const allEntries = await db.balanceEntries.toArray();
@@ -1025,15 +1121,11 @@ export function ExpenseProvider({ children }) {
         .map((e) => e.id);
       await db.balanceEntries.bulkDelete(pairIds);
       await cascadeRemoveFeeContributions(pairIds);
-      await reloadHierarchy();
-      await reloadAssets();
       return;
     }
 
     await db.balanceEntries.delete(entryId);
     await cascadeRemoveFeeContributions([entryId]);
-    await reloadHierarchy();
-    await reloadAssets();
   });
 
   // Derived list of distinct income categories, for the Add Income
@@ -1125,21 +1217,15 @@ export function ExpenseProvider({ children }) {
   };
 
   const clearDB = withErrorHandling("clearDB", async () => {
-    await db.transactions.clear();
-    await db.days.clear();
-    await db.months.clear();
-    await db.years.clear();
-    await db.travels.clear();
-    await db.buckets.clear();
-    await db.bucketAssignments.clear();
-    await db.accounts.clear();
-    await db.balanceEntries.clear();
-    await db.accountTypes.clear();
+    await db.transaction("rw", db.tables, async () => {
+      await Promise.all(db.tables.map((table) => table.clear()));
+    });
     setYears([]);
     setTravels([]);
     setAccounts([]);
     setBalanceEntries([]);
     setAccountTypes([]);
+    setSyncStatus(null);
   });
 
   // -------------------------
@@ -1174,9 +1260,17 @@ export function ExpenseProvider({ children }) {
   // -------------------------
   // Import Expenses - split into parse (no DB writes) and commit, so
   // callers can show a preview/confirmation before anything is written.
-  // Previously this happened in one shot with zero warning to the user.
   // -------------------------
+  const readAllTables = inTx(async () => {
+    const arrays = await Promise.all(IMPORT_TABLES.map((name) => db[name].toArray()));
+    return Object.fromEntries(IMPORT_TABLES.map((name, i) => [name, arrays[i]]));
+  });
+
   const parseImportFile = withErrorHandling("parseImportFile", async (file) => {
+    if (file.size > MAX_IMPORT_BYTES) {
+      throw new Error("That file is too large to import (max 25 MB).");
+    }
+
     const text = await file.text();
 
     let parsed;
@@ -1188,327 +1282,116 @@ export function ExpenseProvider({ children }) {
 
     // Throws a descriptive error if the shape doesn't match what this app
     // can map - caught by the caller before anything is shown or written.
-    const { years, months, days, transactions, travels, buckets, bucketAssignments, accounts, balanceEntries, accountTypes } =
-      validateImportShape(parsed);
+    const existing = await readAllTables();
+    const validated = validateImportShape(parsed, existing);
+    // Exports from before UUID ids would collide with ids from other devices.
+    const data = needsRekey(validated) ? rekeyTables(validated) : validated;
+    const counts = Object.fromEntries(Object.entries(data).map(([key, rows]) => [key, rows.length]));
 
-    const data = { years, months, days, transactions, travels, buckets, bucketAssignments, accounts, balanceEntries, accountTypes };
-    const counts = {
-      years: years.length,
-      months: months.length,
-      days: days.length,
-      transactions: transactions.length,
-      travels: travels.length,
-      buckets: buckets.length,
-      accounts: accounts.length,
-      balanceEntries: balanceEntries.length,
-      accountTypes: accountTypes.length,
-    };
+    return { data, counts, plan: planImport(existing, data) };
+  });
 
-    return { data, counts };
+  // Re-plans against the data as it is at commit time, so edits made while
+  // the preview was open are kept rather than overwritten.
+  const commitImport = withErrorHandling("commitImport", async (plan, resolutions = {}) => {
+    const summary = await db.transaction("rw", db.tables, async () => {
+      const current = planImport(await readAllTables(), plan.incoming);
+      if (!sameConflicts(current, plan)) {
+        throw new Error("Your data changed since the preview - please import the file again.");
+      }
+
+      const { tables, mergedTransactionIds } = applyImportResolutions(current, resolutions);
+      for (const name of IMPORT_TABLES) {
+        await db[name].clear();
+        await db[name].bulkPut(tables[name]);
+      }
+      for (const id of mergedTransactionIds) await syncShadowExpenseEntry(id);
+
+      return current.summary;
+    });
+
+    await Promise.all([reloadHierarchy(), reloadAssets()]);
+    return { summary };
   });
 
   // -------------------------
-  // Import safeguard: after a commit, scan the *full* resulting tables
-  // (existing + just-imported data together, since duplicates can span
-  // both) for records that represent the same real-world thing under
-  // different ids - e.g. merging exports from two devices whose
-  // autoincrement counters diverged. Resolves deterministically by
-  // keeping the highest-id record in each duplicate group.
+  // Google Drive sync: prepareSync downloads and merges without writing;
+  // planSync applies record choices; commitSync writes locally, then uploads.
   // -------------------------
-  const cleanupDuplicatesAfterImport = async () => {
-    const [allYears, allMonths, allDays, allTx, allBuckets, allAssignments, allAccounts, allBalanceEntries, allAccountTypes] =
-      await Promise.all([
-        db.years.toArray(),
-        db.months.toArray(),
-        db.days.toArray(),
-        db.transactions.toArray(),
-        db.buckets.toArray(),
-        db.bucketAssignments.toArray(),
-        db.accounts.toArray(),
-        db.balanceEntries.toArray(),
-        db.accountTypes.toArray(),
-      ]);
-
-    // =====================================================================
-    // Years / Months / Days / Transactions
-    //
-    // Everything below happens in memory first and is written to the DB
-    // exactly once at the end. This matters because `transactions` has a
-    // compound unique index on [yearId+monthId+dayId+category] - remapping
-    // FKs one write at a time risks a transient ConstraintError if two
-    // surviving rows briefly collide on that key mid-remap.
-    // =====================================================================
-
-    // ---- Step 1: dedupe transactions by their original content fingerprint
-    // (year/month/day/category/amount/comments/breakdown/travel), computed
-    // against the *pre-remap* ids exactly as they came from the DB/import. ----
-    const dayLookup = buildDayLookup(allYears, allMonths, allDays);
-    const contentDupes = findDuplicateGroups(allTx, (t) => transactionFingerprint(t, dayLookup));
-    const removedTxIdsByContent = contentDupes.flatMap(({ remove }) => remove.map((t) => t.id));
-    const removedByContentSet = new Set(removedTxIdsByContent);
-    let workingTx = allTx.filter((t) => !removedByContentSet.has(t.id));
-
-    // ---- Step 2: dedupe years by year number -> yearIdRemap, applied
-    // in-memory to the surviving months/days/transactions. ----
-    const yearDupes = findDuplicateGroups(allYears, yearFingerprint);
-    const yearIdRemap = {};
-    const removedYearIds = [];
-    for (const { keep, remove } of yearDupes) {
-      for (const y of remove) {
-        yearIdRemap[y.id] = keep.id;
-        removedYearIds.push(y.id);
-      }
+  const forgetTokenOnAuthError = async (fn) => {
+    try {
+      return await fn();
+    } catch (err) {
+      if (err instanceof drive.DriveAuthError) clearAccessToken();
+      throw err;
     }
-    const remapYear = (id) => (id in yearIdRemap ? yearIdRemap[id] : id);
-
-    let workingMonths = allMonths.map((m) => ({ ...m, yearId: remapYear(m.yearId) }));
-    let workingDays = allDays.map((d) => ({ ...d, yearId: remapYear(d.yearId) }));
-    workingTx = workingTx.map((t) => ({ ...t, yearId: remapYear(t.yearId) }));
-
-    // ---- Step 3: dedupe months by (yearId, name) *post year-remap* ->
-    // monthIdRemap, applied in-memory to days/transactions. ----
-    const monthDupes = findDuplicateGroups(workingMonths, monthFingerprint);
-    const monthIdRemap = {};
-    const removedMonthIds = [];
-    for (const { keep, remove } of monthDupes) {
-      for (const m of remove) {
-        monthIdRemap[m.id] = keep.id;
-        removedMonthIds.push(m.id);
-      }
-    }
-    const remapMonth = (id) => (id in monthIdRemap ? monthIdRemap[id] : id);
-
-    workingMonths = workingMonths.filter((m) => !monthIdRemap.hasOwnProperty(m.id));
-    workingDays = workingDays.map((d) => ({ ...d, monthId: remapMonth(d.monthId) }));
-    workingTx = workingTx.map((t) => ({ ...t, monthId: remapMonth(t.monthId) }));
-
-    // ---- Step 4: dedupe days by (yearId, monthId, day) *post month-remap*
-    // -> dayIdRemap, applied in-memory to transactions. ----
-    const dayDupes = findDuplicateGroups(workingDays, dayFingerprint);
-    const dayIdRemap = {};
-    const removedDayIds = [];
-    for (const { keep, remove } of dayDupes) {
-      for (const d of remove) {
-        dayIdRemap[d.id] = keep.id;
-        removedDayIds.push(d.id);
-      }
-    }
-    const remapDay = (id) => (id in dayIdRemap ? dayIdRemap[id] : id);
-
-    workingDays = workingDays.filter((d) => !dayIdRemap.hasOwnProperty(d.id));
-    workingTx = workingTx.map((t) => ({ ...t, dayId: remapDay(t.dayId) }));
-
-    // ---- Step 5: critical safety pass - the remaps above can themselves
-    // create brand-new (yearId+monthId+dayId+category) collisions between
-    // two transactions whose *content* differed (so step 1 didn't catch
-    // them) but which now land on the same day+category after merging.
-    // Must run, and must be resolved, before any DB write - otherwise
-    // `bulkPut` can throw a ConstraintError against the transactions
-    // table's compound unique index. ----
-    const collisionKey = (t) => `${t.yearId}:${t.monthId}:${t.dayId}:${t.category}`;
-    const collisionDupes = findDuplicateGroups(workingTx, collisionKey);
-    const removedTxIdsByCollision = collisionDupes.flatMap(({ remove }) => remove.map((t) => t.id));
-    const removedByCollisionSet = new Set(removedTxIdsByCollision);
-    workingTx = workingTx.filter((t) => !removedByCollisionSet.has(t.id));
-
-    // ---- Step 6: write once. Deletes first (removed ids can never reappear
-    // in the surviving arrays below, so ordering here is safe), then puts. ----
-    const removedTxIds = [...removedTxIdsByContent, ...removedTxIdsByCollision];
-
-    if (removedTxIds.length > 0) await db.transactions.bulkDelete(removedTxIds);
-    if (removedDayIds.length > 0) await db.days.bulkDelete(removedDayIds);
-    if (removedMonthIds.length > 0) await db.months.bulkDelete(removedMonthIds);
-    if (removedYearIds.length > 0) await db.years.bulkDelete(removedYearIds);
-
-    if (workingMonths.length > 0) await db.months.bulkPut(workingMonths);
-    if (workingDays.length > 0) await db.days.bulkPut(workingDays);
-    if (workingTx.length > 0) await db.transactions.bulkPut(workingTx);
-
-    // If a transaction that was linked to an account gets removed as a
-    // duplicate above, its shadow "expense" entry must go with it -
-    // otherwise the surviving (kept) duplicate's own shadow entry would
-    // double-count the same real-world expense against that account's
-    // balance.
-    if (removedTxIds.length > 0) {
-      const orphanedShadows = allBalanceEntries.filter(
-        (e) => e.type === "expense" && e.sourceTransactionId != null && removedTxIds.includes(e.sourceTransactionId)
-      );
-      if (orphanedShadows.length > 0) {
-        await db.balanceEntries.bulkDelete(orphanedShadows.map((e) => e.id));
-      }
-    }
-
-    // =====================================================================
-    // Step 7: Buckets / bucket assignments - unchanged from before.
-    // =====================================================================
-
-    // Buckets duplicated by name - keep highest id, remap any assignments
-    // pointing at the removed (lower-id, "older") duplicates over to the
-    // retained bucket.
-    const bucketDupes = findDuplicateGroups(allBuckets, bucketFingerprint);
-    const bucketIdRemap = {};
-    const removedBucketIds = [];
-    for (const { keep, remove } of bucketDupes) {
-      for (const b of remove) {
-        bucketIdRemap[b.id] = keep.id;
-        removedBucketIds.push(b.id);
-      }
-    }
-
-    if (removedBucketIds.length > 0) {
-      const toRemap = allAssignments.filter((a) => removedBucketIds.includes(a.bucketId));
-      for (const a of toRemap) {
-        await db.bucketAssignments.update(a.id, { bucketId: bucketIdRemap[a.bucketId] });
-      }
-      await db.buckets.bulkDelete(removedBucketIds);
-    }
-
-    // Bucket assignments duplicated by (bucket, category) - remapping above
-    // can itself create fresh duplicates (two old buckets both had "Food"
-    // assigned, both now point at the same retained bucket).
-    const assignmentsAfterRemap = await db.bucketAssignments.toArray();
-    const assignmentDupes = findDuplicateGroups(assignmentsAfterRemap, bucketAssignmentFingerprint);
-    const removedAssignmentIds = assignmentDupes.flatMap(({ remove }) => remove.map((a) => a.id));
-    if (removedAssignmentIds.length > 0) {
-      await db.bucketAssignments.bulkDelete(removedAssignmentIds);
-    }
-
-    // =====================================================================
-    // Step 8: Accounts / balance entries - same shape as buckets/
-    // bucketAssignments above (name-based dedup, then remap, then a second
-    // pass for duplicates the remap itself creates). Notably simpler than
-    // the years/months/days work: balanceEntries has no compound unique
-    // index, so there's no ConstraintError risk and no need for an
-    // in-memory-first/single-write choreography.
-    // =====================================================================
-    const accountDupes = findDuplicateGroups(allAccounts, accountFingerprint);
-    const accountIdRemap = {};
-    const removedAccountIds = [];
-    for (const { keep, remove } of accountDupes) {
-      for (const a of remove) {
-        accountIdRemap[a.id] = keep.id;
-        removedAccountIds.push(a.id);
-      }
-    }
-
-    if (removedAccountIds.length > 0) {
-      const toRemap = allBalanceEntries.filter((e) => removedAccountIds.includes(e.accountId));
-      for (const e of toRemap) {
-        await db.balanceEntries.update(e.id, { accountId: accountIdRemap[e.accountId] });
-      }
-
-      // A transfer's OTHER leg can reference a removed duplicate account
-      // via counterpartAccountId even when this leg's own accountId didn't
-      // need remapping - checked independently of the accountId remap
-      // above rather than only for entries already caught by it. Also
-      // covers a Convert entry's own counterpartAccountId (its linked
-      // funding-source leg, set when sourceAccountId was given).
-      const transfersReferencingRemoved = allBalanceEntries.filter(
-        (e) =>
-          (e.type === "transfer" || e.type === "convert") &&
-          e.counterpartAccountId != null &&
-          removedAccountIds.includes(e.counterpartAccountId)
-      );
-      for (const e of transfersReferencingRemoved) {
-        await db.balanceEntries.update(e.id, { counterpartAccountId: accountIdRemap[e.counterpartAccountId] });
-      }
-
-      // Any OTHER account whose costCurrencyAccountId points at a removed
-      // duplicate (e.g. a stock account priced against a USD wallet that
-      // just got deduped) needs that reference remapped too - otherwise it
-      // would dangle, pointing at a deleted account id.
-      const accountsReferencingRemoved = allAccounts.filter(
-        (a) => a.costCurrencyAccountId != null && removedAccountIds.includes(a.costCurrencyAccountId)
-      );
-      for (const a of accountsReferencingRemoved) {
-        await db.accounts.update(a.id, { costCurrencyAccountId: accountIdRemap[a.costCurrencyAccountId] });
-      }
-
-      // Real transactions linked via "Paid From" also reference accounts
-      // directly (separate table from balanceEntries) - same remap, so a
-      // linked transaction never ends up pointing at a deleted account id.
-      const transactionsAfterTxWrite = await db.transactions.toArray();
-      const transactionsReferencingRemoved = transactionsAfterTxWrite.filter(
-        (t) => t.accountId != null && removedAccountIds.includes(t.accountId)
-      );
-      for (const t of transactionsReferencingRemoved) {
-        await db.transactions.update(t.id, { accountId: accountIdRemap[t.accountId] });
-      }
-
-      await db.accounts.bulkDelete(removedAccountIds);
-    }
-
-    // Balance entries duplicated by full content - remapping above can
-    // itself create fresh duplicates (two old accounts each had the same
-    // starting-balance reconciliation, both now point at the same
-    // retained account).
-    const balanceEntriesAfterRemap = await db.balanceEntries.toArray();
-    const balanceEntryDupes = findDuplicateGroups(balanceEntriesAfterRemap, balanceEntryFingerprint);
-    const removedBalanceEntryIds = balanceEntryDupes.flatMap(({ remove }) => remove.map((e) => e.id));
-    if (removedBalanceEntryIds.length > 0) {
-      await db.balanceEntries.bulkDelete(removedBalanceEntryIds);
-    }
-
-    // =====================================================================
-    // Step 9: Account Types - same name-based dedup shape as buckets/
-    // accounts above. `typeId` lives directly on the account row, so the
-    // remap here is a single db.accounts.update per affected account,
-    // simpler than the balanceEntries join-less-but-FK-bearing case above.
-    // =====================================================================
-    const accountTypeDupes = findDuplicateGroups(allAccountTypes, accountTypeFingerprint);
-    const accountTypeIdRemap = {};
-    const removedAccountTypeIds = [];
-    for (const { keep, remove } of accountTypeDupes) {
-      for (const t of remove) {
-        accountTypeIdRemap[t.id] = keep.id;
-        removedAccountTypeIds.push(t.id);
-      }
-    }
-
-    if (removedAccountTypeIds.length > 0) {
-      const accountsAfterAccountRemap = await db.accounts.toArray();
-      const toRemap = accountsAfterAccountRemap.filter((a) => removedAccountTypeIds.includes(a.typeId));
-      for (const a of toRemap) {
-        await db.accounts.update(a.id, { typeId: accountTypeIdRemap[a.typeId] });
-      }
-      await db.accountTypes.bulkDelete(removedAccountTypeIds);
-    }
-
-    return {
-      yearsRemoved: removedYearIds.length,
-      monthsRemoved: removedMonthIds.length,
-      daysRemoved: removedDayIds.length,
-      transactionsRemoved: removedTxIds.length,
-      bucketsRemoved: removedBucketIds.length,
-      assignmentsRemoved: removedAssignmentIds.length,
-      accountsRemoved: removedAccountIds.length,
-      balanceEntriesRemoved: removedBalanceEntryIds.length,
-      accountTypesRemoved: removedAccountTypeIds.length,
-    };
   };
 
-  const commitImport = withErrorHandling("commitImport", async (data) => {
-    const { years, months, days, transactions, travels, buckets, bucketAssignments, accounts, balanceEntries, accountTypes } =
-      data;
+  const prepareSync = withErrorHandling("prepareSync", async () => {
+    const accessToken = await getAccessToken();
+    return forgetTokenOnAuthError(async () => {
+      const [state, local, file] = await Promise.all([
+        db.syncState.get(SYNC_STATE_KEY),
+        readAllTables(),
+        drive.findSyncFile(accessToken),
+      ]);
+      const remote = file
+        ? validateImportShape(parseSnapshot(await drive.downloadFile(accessToken, file.id)).tables, local)
+        : {};
+      // Base hashes are only meaningful against the Drive file they were recorded for.
+      const base = file && state?.fileId === file.id ? state.base : {};
 
-    await db.travels.bulkPut(travels);
-    await db.buckets.bulkPut(buckets);
-    await db.bucketAssignments.bulkPut(bucketAssignments);
-    await db.years.bulkPut(years);
-    await db.months.bulkPut(months);
-    await db.days.bulkPut(days);
-    await db.transactions.bulkPut(transactions);
-    await db.accountTypes.bulkPut(accountTypes);
-    await db.accounts.bulkPut(accounts);
-    await db.balanceEntries.bulkPut(balanceEntries);
-
-    const cleanup = await cleanupDuplicatesAfterImport();
-
-    await reloadHierarchy();
-    await reloadAssets();
-
-    return { cleanup };
+      return {
+        fileId: file?.id ?? null,
+        remoteVersion: file?.version ?? null,
+        localHash: hashRecord(hashTables(local)),
+        merge: mergeSnapshots({ base, local, remote }),
+      };
+    });
   });
+
+  const planSync = (prepared, recordResolutions = {}) => {
+    const sides = applyRecordResolutions(prepared.merge, recordResolutions);
+    return planImport(sides.localSide, sides.remoteSide);
+  };
+
+  const commitSync = withErrorHandling("commitSync", async (prepared, recordResolutions = {}, planResolutions = {}) => {
+    const accessToken = await getAccessToken();
+    const plan = planSync(prepared, recordResolutions);
+    const { tables } = applyImportResolutions(plan, planResolutions);
+    const withShadows = { ...tables, balanceEntries: [...tables.balanceEntries, ...buildShadowEntries(tables)] };
+
+    await db.transaction("rw", db.tables, async () => {
+      if (hashRecord(hashTables(await readAllTables())) !== prepared.localHash) {
+        throw new Error("Data on this device changed during sync. Please sync again.");
+      }
+      for (const name of IMPORT_TABLES) {
+        await db[name].clear();
+        await db[name].bulkPut(withShadows[name]);
+      }
+    });
+    await Promise.all([reloadHierarchy(), reloadAssets()]);
+
+    await forgetTokenOnAuthError(async () => {
+      if (prepared.fileId && (await drive.getFileVersion(accessToken, prepared.fileId)) !== prepared.remoteVersion) {
+        throw new Error("Google Drive was updated from another device during this sync. Please sync again.");
+      }
+      const snapshot = buildSnapshot(tables);
+      const content = JSON.stringify(snapshot);
+      const saved = prepared.fileId
+        ? await drive.updateSyncFile(accessToken, prepared.fileId, content)
+        : await drive.createSyncFile(accessToken, content);
+
+      const lastSyncedAt = new Date();
+      await db.syncState.put({ key: SYNC_STATE_KEY, fileId: saved.id, base: hashTables(snapshot.tables), lastSyncedAt });
+      setSyncStatus({ lastSyncedAt });
+    });
+
+    return { summary: plan.summary };
+  });
+
+  // Keeps the sync base so deletions still propagate after reconnecting.
+  const disconnectSync = withErrorHandling("disconnectSync", () => revokeAccess());
 
   // -------------------------
   // Categories helper (derived from the shared allTransactions list)
@@ -1569,7 +1452,7 @@ export function ExpenseProvider({ children }) {
   // with potentially stale/empty `categories` memo.
   const cleanBucketAssignments = withErrorHandling("cleanBucketAssignments", async () => {
     const assignments = await db.bucketAssignments.toArray();
-    
+
     // Get current categories directly from DB to avoid stale closure
     const allTx = await db.transactions.toArray();
     const existingCategories = new Set(allTx.map((t) => t.category).filter(Boolean));
@@ -1585,6 +1468,7 @@ export function ExpenseProvider({ children }) {
   });
 
   const value = {
+    isLoaded,
     years,
     travels,
     allTransactions,
@@ -1599,11 +1483,11 @@ export function ExpenseProvider({ children }) {
     addTransaction,
     updateTransaction,
     removeTransaction,
+    saveDayTransactions,
 
     addTravel,
     updateTravel,
     removeTravel,
-    getTravelTransactions,
 
     getYearId,
     getMonthId,
@@ -1611,6 +1495,12 @@ export function ExpenseProvider({ children }) {
     exportExpenses,
     parseImportFile,
     commitImport,
+
+    syncStatus,
+    prepareSync,
+    planSync,
+    commitSync,
+    disconnectSync,
 
     addBucket,
     removeBucket,

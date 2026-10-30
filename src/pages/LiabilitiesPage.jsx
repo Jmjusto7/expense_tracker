@@ -17,6 +17,14 @@ export default function LiabilitiesPage() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [editAccountId, setEditAccountId] = useState(null);
 
+  const handleRemoveAccount = async (accountId) => {
+    try {
+      await removeAccount(accountId);
+    } catch (err) {
+      alert(err.message || "Failed to delete account.");
+    }
+  };
+
   // getTotalBalance already nets every liability's signed balance
   // correctly; flipped here purely for a human-readable figure. If the net
   // across all liabilities is actually positive (more credit than debt),
@@ -86,7 +94,7 @@ export default function LiabilitiesPage() {
                 </button>
 
                 <ConfirmButton
-                  onConfirm={() => removeAccount(account.id)}
+                  onConfirm={() => handleRemoveAccount(account.id)}
                   className="bg-surface border border-border text-ink-muted hover:text-alert rounded-md p-1.5"
                   confirmClassName="bg-alert text-white border border-alert rounded-md p-1.5 text-xs font-medium px-2"
                   title="Delete this liability? Removes its history. Linked transactions survive, unlinked."
@@ -104,11 +112,10 @@ export default function LiabilitiesPage() {
               {/* Type badge */}
               <div className="mb-2">
                 <span
-                  className={`text-xs px-2 py-0.5 rounded-full border ${
-                    typeName
+                  className={`text-xs px-2 py-0.5 rounded-full border ${typeName
                       ? "bg-ledger-soft text-ledger-dark border-ledger/30"
                       : "bg-surface-sunken text-ink-muted border-border"
-                  }`}
+                    }`}
                 >
                   {typeName || "Unclassified"}
                 </span>
@@ -134,9 +141,8 @@ export default function LiabilitiesPage() {
               {/* Statement summary */}
               {info.cutoffDate ? (
                 <div
-                  className={`text-xs px-2 py-1 rounded-md inline-block ${
-                    info.isPaid ? "bg-ledger-soft text-ledger-dark" : "bg-alert-soft text-alert"
-                  }`}
+                  className={`text-xs px-2 py-1 rounded-md inline-block ${info.isPaid ? "bg-ledger-soft text-ledger-dark" : "bg-alert-soft text-alert"
+                    }`}
                 >
                   {info.isPaid ? "Statement paid" : `${formatCurrency(Math.abs(info.statementBalance ?? 0))} due`}
                 </div>

@@ -66,7 +66,7 @@ export default function AddAccountModal({ onClose }) {
         startingDate,
         typeId,
         unit: isForeign ? unit.trim() : null,
-        costCurrencyAccountId: isForeign && costCurrencyAccountId ? Number(costCurrencyAccountId) : null,
+        costCurrencyAccountId: isForeign && costCurrencyAccountId ? costCurrencyAccountId : null,
         startingCostBasis: isForeign && startingCostBasis !== "" ? Number(startingCostBasis) : null,
         startingPrice: isForeign ? Number(startingPrice) : null,
       });
@@ -130,14 +130,12 @@ export default function AddAccountModal({ onClose }) {
                 role="switch"
                 aria-checked={isForeign}
                 onClick={() => setIsForeign((v) => !v)}
-                className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${
-                  isForeign ? "bg-ledger" : "bg-border"
-                }`}
+                className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${isForeign ? "bg-ledger" : "bg-border"
+                  }`}
               >
                 <span
-                  className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${
-                    isForeign ? "translate-x-5" : ""
-                  }`}
+                  className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${isForeign ? "translate-x-5" : ""
+                    }`}
                 />
               </button>
             </div>
