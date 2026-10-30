@@ -98,7 +98,7 @@ export default function MonthExpensesPage() {
       ) : (
         <div className="space-y-3">
           {yearObj.months
-            .sort((a, b) => ALL_MONTHS.indexOf(a.name) - ALL_MONTHS.indexOf(b.name))
+            .sort((a, b) => ALL_MONTHS.indexOf(b.name) - ALL_MONTHS.indexOf(a.name))
             .map((month) => {
               const total = month.days?.reduce(
                 (daySum, day) =>

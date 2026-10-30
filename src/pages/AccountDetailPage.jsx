@@ -7,14 +7,17 @@ import { formatDate } from "../utils/dateHelpers";
 import {
   getCurrentBalance,
   getCurrentValuePhp,
+  getValueInCostCurrency,
   getAverageCost,
   getLatestPrice,
   getUnrealizedGainLoss,
+  buildInvestmentHistory,
   daysSinceLastReconciliation,
   getImpliedSpendPeriods,
   getAccountEntriesSorted,
 } from "../utils/balanceHelpers";
 import AccountBalanceChart from "../components/AccountBalanceChart";
+import InvestmentGrowthChart from "../components/InvestmentGrowthChart";
 import AddIncomeModal from "../components/AddIncomeModal";
 import ReconcileBalanceModal from "../components/ReconcileBalanceModal";
 import ConvertModal from "../components/ConvertModal";
@@ -62,6 +65,17 @@ export default function AccountDetailPage() {
   const avgCost = isForeign ? getAverageCost(balanceEntries, numericId) : null;
   const currentPrice = isForeign ? getLatestPrice(balanceEntries, numericId) : null;
   const gainLoss = isForeign ? getUnrealizedGainLoss(balanceEntries, numericId) : null;
+
+  // Only worth showing as its own line when it's a genuinely different
+  // number from phpValue above - a one-hop account (costCurrencyLabel ===
+  // "PHP") already has its cost-currency value AND PHP value be the same
+  // figure, so this is specifically for two-hop accounts like VOO (priced
+  // in IBKR USD, which is itself priced in PHP) where "worth in USD" and
+  // "worth in PHP" are two genuinely different, both-useful numbers.
+  const costCurrencyValue = isForeign ? getValueInCostCurrency(balanceEntries, numericId) : null;
+  const showCostCurrencyValue = isForeign && costCurrencyLabel !== "PHP";
+
+  const investmentHistory = isForeign ? buildInvestmentHistory(balanceEntries, numericId) : [];
 
   const staleDays = daysSinceLastReconciliation(balanceEntries, numericId);
   const periods = getImpliedSpendPeriods(balanceEntries, numericId);
@@ -150,6 +164,11 @@ export default function AccountDetailPage() {
             <div className="money text-2xl font-bold mt-2 text-ink">
               {currentBalance == null ? "—" : `${formatNumber(currentBalance, 4)} ${account.unit}`}
             </div>
+            {showCostCurrencyValue && (
+              <div className="money text-lg font-semibold mt-1 text-ink">
+                {costCurrencyValue == null ? "≈ — (no price recorded yet)" : `≈ ${formatNumber(costCurrencyValue)} ${costCurrencyLabel}`}
+              </div>
+            )}
             <div className={`money text-sm mt-0.5 ${balanceColor}`}>
               {phpValue == null ? "≈ — (no price recorded yet)" : `≈ ${formatCurrency(phpValue)} today`}
             </div>
@@ -226,18 +245,17 @@ export default function AccountDetailPage() {
         </button>
       </div>
 
-      {/* Average Cost / Current Price / Gain-Loss - foreign accounts only,
-          deliberately shown in the account's own cost currency, never
-          translated to PHP (see foreign-assets-plan.md §3). */}
       {isForeign && (
-        <div className="grid sm:grid-cols-3 gap-4 mb-6">
+        <div className="grid sm:grid-cols-3 gap-4 mb-4">
           <StatCard
-            label="Average Cost"
-            value={avgCost == null ? "—" : `${formatNumber(avgCost, 4)} ${costCurrencyLabel}/${account.unit}`}
+            label="Total Invested"
+            value={gainLoss == null ? "—" : `${formatNumber(gainLoss.totalCostBasis)} ${costCurrencyLabel}`}
+            sublabel="Sum of every purchase's cost basis"
           />
           <StatCard
-            label="Current Price"
-            value={currentPrice == null ? "—" : `${formatNumber(currentPrice, 4)} ${costCurrencyLabel}/${account.unit}`}
+            label="Current Value"
+            value={gainLoss == null ? "—" : `${formatNumber(gainLoss.currentValue)} ${costCurrencyLabel}`}
+            sublabel="Units held x current price"
           />
           <StatCard
             label="Gain / Loss"
@@ -246,8 +264,26 @@ export default function AccountDetailPage() {
                 ? "—"
                 : `${gainLoss.gainLoss >= 0 ? "+" : ""}${formatNumber(gainLoss.gainLoss)} ${costCurrencyLabel}`
             }
-            sublabel={gainLoss?.pct != null ? `${gainLoss.pct >= 0 ? "+" : ""}${gainLoss.pct.toFixed(1)}%` : "In " + costCurrencyLabel + ", not PHP"}
+            sublabel={gainLoss?.pct != null ? `${gainLoss.pct >= 0 ? "+" : ""}${gainLoss.pct.toFixed(1)}% since inception` : "In " + costCurrencyLabel + ", not PHP"}
             accent={gainLoss && gainLoss.gainLoss < 0 ? "alert" : "ledger"}
+          />
+        </div>
+      )}
+
+      {/* Average Cost / Current Price - foreign accounts only, deliberately
+          shown in the account's own cost currency, never translated to PHP
+          (see foreign-assets-plan.md §3). Gain/Loss's dollar figures moved
+          up to the Total Invested / Current Value row above - this row is
+          now just the per-unit reference numbers. */}
+      {isForeign && (
+        <div className="grid sm:grid-cols-2 gap-4 mb-6">
+          <StatCard
+            label="Average Cost"
+            value={avgCost == null ? "—" : `${formatNumber(avgCost, 4)} ${costCurrencyLabel}/${account.unit}`}
+          />
+          <StatCard
+            label="Current Price"
+            value={currentPrice == null ? "—" : `${formatNumber(currentPrice, 4)} ${costCurrencyLabel}/${account.unit}`}
           />
         </div>
       )}
@@ -282,6 +318,15 @@ export default function AccountDetailPage() {
         </div>
         <AccountBalanceChart entries={balanceEntries} accountId={numericId} />
       </div>
+
+      {isForeign && investmentHistory.length > 0 && (
+        <div className="bg-surface rounded-lg border border-border p-6 mb-6">
+          <div className="text-xs text-ink-muted uppercase tracking-wide mb-3">
+            Total Invested vs Current Value
+          </div>
+          <InvestmentGrowthChart data={investmentHistory} unitLabel={costCurrencyLabel} />
+        </div>
+      )}
 
       <div className="bg-surface rounded-lg border border-border p-4">
         <h2 className="text-sm font-semibold text-ink mb-3">History</h2>

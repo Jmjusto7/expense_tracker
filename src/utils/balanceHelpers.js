@@ -163,6 +163,41 @@ export function getLatestPrice(entries, accountId, asOfDate = new Date()) {
   return latest.amount ? latest.costBasis / latest.amount : null;
 }
 
+// Cost basis vs current market value, one point per trailing month (default
+// 12) - the series behind AccountDetailPage's growth chart. Unlike
+// buildMonthlyNetWorth (account-LIST level, for the Home dashboard), this
+// is scoped to one investment account and tracks the two figures
+// getUnrealizedGainLoss already compares today, across time instead: cost
+// basis only grows as Convert entries accumulate, current value moves
+// independently with price. Both stay in the account's own cost currency,
+// same "never PHP-translate an asset's own performance" rule as
+// getAverageCost/getUnrealizedGainLoss. Returns [] for an account with no
+// convert entries yet - nothing to chart.
+export function buildInvestmentHistory(entries, accountId, monthsBack = 12, endDate = new Date()) {
+  const converts = getConvertEntries(entries, accountId);
+  if (converts.length === 0) return [];
+
+  const rows = [];
+  for (let i = monthsBack - 1; i >= 0; i--) {
+    const monthDate = new Date(endDate.getFullYear(), endDate.getMonth() - i, 1);
+    const monthEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0);
+    const monthEndTs = toDayTimestamp(monthEnd);
+
+    const costBasisToDate = converts
+      .filter((e) => toDayTimestamp(e.date) <= monthEndTs)
+      .reduce((sum, e) => sum + Number(e.costBasis || 0), 0);
+
+    if (costBasisToDate === 0) continue; // nothing purchased yet as of this month - skip rather than plot a false zero
+
+    rows.push({
+      date: monthDate,
+      costBasis: costBasisToDate,
+      currentValue: getValueInCostCurrency(entries, accountId, monthEnd),
+    });
+  }
+  return rows;
+}
+
 // The dollar-cost average itself, in the account's own cost currency -
 // deliberately NOT converted to PHP (see foreign-assets-plan.md §1/§3 on
 // why blending currency movement into an asset's own cost would

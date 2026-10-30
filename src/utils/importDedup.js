@@ -2,8 +2,21 @@
 
 // Groups items by a fingerprint function and returns only the groups that
 // actually have more than one member. Each duplicate group resolves
-// deterministically to { keep, remove }: keep is the highest-id item,
-// remove is everything else in that group.
+// deterministically to { keep, remove }: keep is the most-recently-created
+// item (by createdAt), remove is everything else in that group.
+//
+// Previously "highest-id item" (`sort((a, b) => b.id - a.id)`), which
+// relied on ids being auto-incrementing numbers where a higher id reliably
+// meant "created later." Under Dexie Cloud, primary keys are opaque
+// globally-unique strings with no meaningful ordering - `b.id - a.id` on
+// two strings is NaN, and a comparator returning NaN is treated as "equal"
+// by Array.sort, silently making "keep" arbitrary (whatever order the
+// items happened to be iterated in) instead of "the newest." createdAt is
+// the only thing left that's actually meaningful to sort by - see the
+// createdAt: new Date() stamp added to every record-creating call in
+// ExpenseContext.jsx. Records with no createdAt (pre-migration legacy
+// data that slipped through) sort as oldest (epoch 0) rather than
+// throwing, so a bad/missing timestamp never crashes the import.
 export function findDuplicateGroups(items, fingerprintFn) {
   const groups = new Map();
 
@@ -13,10 +26,12 @@ export function findDuplicateGroups(items, fingerprintFn) {
     groups.get(fp).push(item);
   }
 
+  const createdAtMs = (item) => (item.createdAt ? new Date(item.createdAt).getTime() : 0);
+
   const duplicates = [];
   for (const group of groups.values()) {
     if (group.length > 1) {
-      const sorted = [...group].sort((a, b) => b.id - a.id);
+      const sorted = [...group].sort((a, b) => createdAtMs(b) - createdAtMs(a));
       duplicates.push({ keep: sorted[0], remove: sorted.slice(1) });
     }
   }

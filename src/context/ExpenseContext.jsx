@@ -133,7 +133,7 @@ export function ExpenseProvider({ children }) {
     const existing = await db.years.where({ year: yearNumber }).first();
     if (existing) return existing.id;
 
-    const yearId = await db.years.add({ year: yearNumber });
+    const yearId = await db.years.add({ year: yearNumber, createdAt: new Date() });
     await reloadHierarchy();
     return yearId;
   });
@@ -155,7 +155,7 @@ export function ExpenseProvider({ children }) {
       .first();
     if (existing) return existing.id;
 
-    const monthId = await db.months.add({ yearId, name });
+    const monthId = await db.months.add({ yearId, name, createdAt: new Date() });
     await reloadHierarchy();
     return monthId;
   });
@@ -177,7 +177,7 @@ export function ExpenseProvider({ children }) {
       .first();
     if (existing) return existing.id;
 
-    const dayId = await db.days.add({ yearId, monthId, day: dayNumber });
+    const dayId = await db.days.add({ yearId, monthId, day: dayNumber, createdAt: new Date() });
     await reloadHierarchy();
     return dayId;
   });
@@ -240,6 +240,7 @@ export function ExpenseProvider({ children }) {
       category: transaction.category || null,
       comments: transaction.comments || "",
       sourceTransactionId: transactionId,
+      createdAt: new Date(),
     });
   };
 
@@ -299,6 +300,7 @@ export function ExpenseProvider({ children }) {
         dayId,
         travelId: normalizeTravelId(transaction.travelId),
         accountId: transaction.accountId ?? null,
+        createdAt: new Date(),
       });
 
       await syncShadowExpenseEntry(id);
@@ -323,8 +325,22 @@ export function ExpenseProvider({ children }) {
   );
 
   const removeTransaction = withErrorHandling("removeTransaction", async (transactionId) => {
+    const tx = await db.transactions.get(transactionId);
     await db.transactions.delete(transactionId);
     await syncShadowExpenseEntry(transactionId); // transaction's gone - this just cleans up any shadow it had
+
+    // Reverse of removeBalanceEntry's fee-cascade below: if this
+    // transaction carried one or more auto-logged fee contributions (see
+    // addConvertEntry/addTransfer's sourceBalanceEntryIds), clear `fee` on
+    // each source balance entry. The convert/transfer event itself stays
+    // intact - units, costBasis, and the transfer amount are all real and
+    // unrelated to the fee - only the fee summary is cleared, since its
+    // own expense record is what just disappeared.
+    const feeSourceIds = tx?.sourceBalanceEntryIds?.filter((id) => id != null) || [];
+    for (const beId of feeSourceIds) {
+      await db.balanceEntries.update(beId, { fee: null });
+    }
+
     await reloadHierarchy();
     await reloadAssets();
   });
@@ -340,6 +356,7 @@ export function ExpenseProvider({ children }) {
         startDate: new Date(startDate),
         endDate: new Date(endDate),
         comments,
+        createdAt: new Date(),
       });
 
       await reloadHierarchy();
@@ -435,6 +452,7 @@ export function ExpenseProvider({ children }) {
         pricePerUnit: null,
         category: null,
         comments: "Starting balance",
+        createdAt: new Date(),
       });
 
       if (hasKnownCostBasis) {
@@ -449,6 +467,7 @@ export function ExpenseProvider({ children }) {
           pricePerUnit: null,
           category: null,
           comments: "Starting units",
+          createdAt: new Date(),
         });
       }
 
@@ -467,6 +486,7 @@ export function ExpenseProvider({ children }) {
           pricePerUnit: Number(startingPrice),
           category: null,
           comments: "Starting price",
+          createdAt: new Date(),
         });
       }
 
@@ -504,6 +524,7 @@ export function ExpenseProvider({ children }) {
         balance: null,
         category: category?.trim() || null,
         comments: comments?.trim() || "",
+        createdAt: new Date(),
       });
       await reloadAssets();
       return id;
@@ -525,6 +546,7 @@ export function ExpenseProvider({ children }) {
         balance: Number(balance),
         category: null,
         comments: comments?.trim() || "",
+        createdAt: new Date(),
       });
       await reloadAssets();
       return id;
@@ -551,6 +573,7 @@ export function ExpenseProvider({ children }) {
         pricePerUnit: null,
         category: null,
         comments: comments?.trim() || "",
+        createdAt: new Date(),
       });
       await reloadAssets();
       return id;
@@ -603,6 +626,39 @@ export function ExpenseProvider({ children }) {
         transferGroupId = `conv_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
       }
 
+      // Fee-to-PHP rate, computed BEFORE either balance entry below is
+      // written. account.costCurrencyAccountId is very often the SAME
+      // account as sourceAccountId (e.g. VOO's cost currency is IBKR USD,
+      // funded FROM IBKR USD) - fetching this lookup after the
+      // funding-source debit leg was written (the original bug here, same
+      // root cause as addTransfer's) would mean a purchase spending all or
+      // nearly all of what's in the funding account makes refUnits come
+      // back at or near zero, silently failing the conversion on exactly
+      // the purchases that most need it converted.
+      let feeInPhp = feeAmt != null ? feeAmt : 0;
+      let feeNote = "";
+      // Hoisted out of the block below: the fee transaction's comment text
+      // further down reads account?.name, and a const declared inside the
+      // if-block isn't visible there (that was the ReferenceError behind
+      // "saving failed" whenever a fee was entered).
+      let account = null;
+      if (feeAmt != null && feeAmt > 0) {
+        const [allAccounts, allEntries] = await Promise.all([db.accounts.toArray(), db.balanceEntries.toArray()]);
+        account = allAccounts.find((a) => a.id === accountId);
+
+        if (account?.costCurrencyAccountId != null) {
+          // Fee is in a foreign currency - convert to PHP via the same
+          // chained lookup used everywhere else, at the conversion date.
+          const refUnits = getCurrentBalance(allEntries, account.costCurrencyAccountId, new Date(date));
+          const refValuePhp = getCurrentValuePhp(allEntries, allAccounts, account.costCurrencyAccountId, new Date(date));
+          if (refUnits && refValuePhp != null) {
+            const rate = refValuePhp / refUnits;
+            feeInPhp = feeAmt * rate;
+            feeNote = ` ($${feeAmt.toFixed(2)} \u2248 \u20b1${feeInPhp.toFixed(2)})`;
+          }
+        }
+      }
+
       const id = await db.balanceEntries.add({
         accountId,
         date: new Date(date),
@@ -614,6 +670,7 @@ export function ExpenseProvider({ children }) {
         pricePerUnit: null,
         category: null,
         comments: comments?.trim() || "",
+        createdAt: new Date(),
         ...(transferGroupId ? { transferGroupId, counterpartAccountId: sourceAccountId } : {}),
       });
 
@@ -644,6 +701,7 @@ export function ExpenseProvider({ children }) {
           comments: comments?.trim() || "",
           transferGroupId,
           counterpartAccountId: accountId,
+          createdAt: new Date(),
         });
       }
 
@@ -652,37 +710,12 @@ export function ExpenseProvider({ children }) {
       // narrowly to conversion fees. Skipped entirely if no fee was given,
       // so this changes nothing for a plain conversion.
       //
-      // Known limitation: the resulting transaction is only linked back to
-      // this convert entry via its `comments` text, not a real reference -
-      // deleting the convert entry later does not delete or adjust the fee
-      // transaction. Acceptable for v1; would need a proper FK to do more.
+      // Linked back to this convert entry via sourceBalanceEntryIds (see
+      // below) - deleting the convert entry now cascades to remove or
+      // shrink the fee transaction it created, via removeBalanceEntry.
+      // feeInPhp/feeNote were already computed above, from pre-conversion
+      // balance data.
       if (fee != null && fee !== "" && Number(fee) > 0) {
-        const [allAccounts, allEntries] = await Promise.all([
-          db.accounts.toArray(),
-          db.balanceEntries.toArray(),
-        ]);
-        const account = allAccounts.find((a) => a.id === accountId);
-
-        let feeInPhp = Number(fee);
-        let feeNote = "";
-
-        if (account?.costCurrencyAccountId != null) {
-          // Fee is in a foreign currency - convert to PHP via the same
-          // chained lookup used everywhere else, at the conversion date.
-          const refUnits = getCurrentBalance(allEntries, account.costCurrencyAccountId, new Date(date));
-          const refValuePhp = getCurrentValuePhp(
-            allEntries,
-            allAccounts,
-            account.costCurrencyAccountId,
-            new Date(date)
-          );
-          if (refUnits && refValuePhp != null) {
-            const rate = refValuePhp / refUnits;
-            feeInPhp = Number(fee) * rate;
-            feeNote = ` ($${Number(fee).toFixed(2)} \u2248 \u20b1${feeInPhp.toFixed(2)})`;
-          }
-        }
-
         const feeDate = new Date(date);
         const category = feeCategory?.trim() || "Fees";
 
@@ -699,11 +732,22 @@ export function ExpenseProvider({ children }) {
           .equals([yearId, monthId, dayId, category])
           .first();
 
+        // sourceBalanceEntryIds is a parallel array to amountBreakdown -
+        // same index = same contribution, null for any breakdown item that
+        // isn't a linked auto-fee (e.g. a manually-entered amount that
+        // happened to land on the same day+category). This is the "proper
+        // FK" flagged as future work above - removeBalanceEntry can now
+        // find and unwind exactly this fee's slice later without
+        // disturbing anything else merged into the same row.
         if (existingFeeTx) {
           const newBreakdown = [...(existingFeeTx.amountBreakdown || [existingFeeTx.amount]), feeInPhp];
+          const priorSourceIds =
+            existingFeeTx.sourceBalanceEntryIds || (existingFeeTx.amountBreakdown || [existingFeeTx.amount]).map(() => null);
+          const newSourceIds = [...priorSourceIds, id];
           await db.transactions.update(existingFeeTx.id, {
             amount: newBreakdown.reduce((s, v) => s + Number(v), 0),
             amountBreakdown: newBreakdown,
+            sourceBalanceEntryIds: newSourceIds,
             comments: existingFeeTx.comments
               ? `${existingFeeTx.comments}; auto-logged fee${feeNote}`
               : `Auto-logged: ${account?.name || "account"} conversion fee${feeNote}`,
@@ -716,8 +760,10 @@ export function ExpenseProvider({ children }) {
             category,
             amount: feeInPhp,
             amountBreakdown: [feeInPhp],
+            sourceBalanceEntryIds: [id],
             comments: `Auto-logged: ${account?.name || "account"} conversion fee${feeNote}`,
             travelId: null,
+            createdAt: new Date(),
           });
         }
 
@@ -746,6 +792,7 @@ export function ExpenseProvider({ children }) {
         pricePerUnit: Number(pricePerUnit),
         category: null,
         comments: comments?.trim() || "",
+        createdAt: new Date(),
       });
       await reloadAssets();
       return id;
@@ -800,6 +847,33 @@ export function ExpenseProvider({ children }) {
       const trimmedComments = comments?.trim() || "";
       const entryDate = new Date(date);
 
+      // Fee-to-PHP rate, computed from balance data as it stood BEFORE this
+      // transfer's own two legs are written below. Fetching this AFTER
+      // outId/inId exist (the original bug here) would include this
+      // transfer's own outgoing debit in the balance lookup - meaning a
+      // transfer that sends out all or nearly all of what's in the
+      // account (exactly the "convert then immediately pass onward"
+      // pattern) makes refUnits come back at or near zero, silently
+      // failing the conversion guard below on precisely the transfers
+      // that most need it. getCurrentValuePhp already walks any
+      // costCurrencyAccountId chain internally, so this one call correctly
+      // handles a plain PHP account (unit null -> rate 1), a foreign
+      // account priced directly in PHP, or a foreign account priced
+      // through another foreign account, without needing separate
+      // branches for each.
+      let feeInPhp = feeAmt;
+      let feeNote = "";
+      if (feeAmt > 0 && fromAccount.unit != null) {
+        const entriesBeforeThisTransfer = await db.balanceEntries.toArray();
+        const refUnits = getCurrentBalance(entriesBeforeThisTransfer, fromAccountId, entryDate);
+        const refValuePhp = getCurrentValuePhp(entriesBeforeThisTransfer, allAccounts, fromAccountId, entryDate);
+        if (refUnits && refValuePhp != null) {
+          const rate = refValuePhp / refUnits;
+          feeInPhp = feeAmt * rate;
+          feeNote = ` (${fromAccount.unit} ${feeAmt.toFixed(2)} \u2248 \u20b1${feeInPhp.toFixed(2)})`;
+        }
+      }
+
       const outId = await db.balanceEntries.add({
         accountId: fromAccountId,
         date: entryDate,
@@ -813,6 +887,7 @@ export function ExpenseProvider({ children }) {
         comments: trimmedComments,
         transferGroupId,
         counterpartAccountId: toAccountId,
+        createdAt: new Date(),
       });
 
       const inId = await db.balanceEntries.add({
@@ -828,34 +903,16 @@ export function ExpenseProvider({ children }) {
         comments: trimmedComments,
         transferGroupId,
         counterpartAccountId: fromAccountId,
+        createdAt: new Date(),
       });
 
       // Fee auto-logging - skipped entirely if no fee was given, so this
-      // changes nothing for a plain transfer. Same known limitation as
-      // Convert's fee logging: linked back to the transfer only via
-      // `comments` text, not a real reference.
+      // changes nothing for a plain transfer. Linked back to the "out" leg
+      // via sourceBalanceEntryIds, same as Convert's fee logging above -
+      // deleting either transfer leg cascades to remove/shrink this fee's
+      // transaction via removeBalanceEntry. feeInPhp/feeNote were already
+      // computed above, from pre-transfer balance data.
       if (feeAmt > 0) {
-        const allEntries = await db.balanceEntries.toArray();
-
-        // Rate to PHP, from the source account's own current valuation -
-        // getCurrentValuePhp already walks any costCurrencyAccountId chain
-        // internally, so this one call correctly handles a plain PHP
-        // account (unit null -> rate 1), a foreign account priced
-        // directly in PHP, or a foreign account priced through another
-        // foreign account, without needing separate branches for each.
-        let feeInPhp = feeAmt;
-        let feeNote = "";
-
-        if (fromAccount.unit != null) {
-          const refUnits = getCurrentBalance(allEntries, fromAccountId, entryDate);
-          const refValuePhp = getCurrentValuePhp(allEntries, allAccounts, fromAccountId, entryDate);
-          if (refUnits && refValuePhp != null) {
-            const rate = refValuePhp / refUnits;
-            feeInPhp = feeAmt * rate;
-            feeNote = ` (${fromAccount.unit} ${feeAmt.toFixed(2)} \u2248 \u20b1${feeInPhp.toFixed(2)})`;
-          }
-        }
-
         const feeDate = entryDate;
         const category = feeCategory?.trim() || "Fees";
 
@@ -870,9 +927,13 @@ export function ExpenseProvider({ children }) {
 
         if (existingFeeTx) {
           const newBreakdown = [...(existingFeeTx.amountBreakdown || [existingFeeTx.amount]), feeInPhp];
+          const priorSourceIds =
+            existingFeeTx.sourceBalanceEntryIds || (existingFeeTx.amountBreakdown || [existingFeeTx.amount]).map(() => null);
+          const newSourceIds = [...priorSourceIds, outId];
           await db.transactions.update(existingFeeTx.id, {
             amount: newBreakdown.reduce((s, v) => s + Number(v), 0),
             amountBreakdown: newBreakdown,
+            sourceBalanceEntryIds: newSourceIds,
             comments: existingFeeTx.comments
               ? `${existingFeeTx.comments}; auto-logged fee${feeNote}`
               : `Auto-logged: ${fromAccount.name} transfer fee${feeNote}`,
@@ -885,8 +946,10 @@ export function ExpenseProvider({ children }) {
             category,
             amount: feeInPhp,
             amountBreakdown: [feeInPhp],
+            sourceBalanceEntryIds: [outId],
             comments: `Auto-logged: ${fromAccount.name} transfer fee${feeNote}`,
             travelId: null,
+            createdAt: new Date(),
           });
         }
 
@@ -897,6 +960,44 @@ export function ExpenseProvider({ children }) {
       return { transferGroupId, outId, inId };
     }
   );
+
+  // Un-merges (or deletes outright) whichever fee transaction(s) the given
+  // balance entries fed - see addConvertEntry/addTransfer's
+  // sourceBalanceEntryIds. Deliberately un-merges rather than blindly
+  // deleting: a transaction that combined this fee with a manually-entered
+  // amount, or with another fee from a different day's entry, only loses
+  // ITS slice - the row is only deleted outright if this was the only
+  // thing contributing to it. Not indexed (sourceBalanceEntryIds is a
+  // plain array field, same precedent as transferGroupId/sourceTransactionId
+  // elsewhere in this schema), so this filters in memory like those do.
+  const cascadeRemoveFeeContributions = async (deletedEntryIds) => {
+    if (!deletedEntryIds || deletedEntryIds.length === 0) return;
+    const allTx = await db.transactions.toArray();
+    const affected = allTx.filter((t) =>
+      t.sourceBalanceEntryIds?.some((sid) => deletedEntryIds.includes(sid))
+    );
+
+    for (const t of affected) {
+      const sourceIds = t.sourceBalanceEntryIds || [];
+      const breakdown = t.amountBreakdown || [t.amount];
+      const keepIdx = sourceIds
+        .map((sid, i) => (deletedEntryIds.includes(sid) ? -1 : i))
+        .filter((i) => i !== -1);
+
+      if (keepIdx.length === 0) {
+        await db.transactions.delete(t.id);
+        continue;
+      }
+
+      const newBreakdown = keepIdx.map((i) => breakdown[i]);
+      const newSourceIds = keepIdx.map((i) => sourceIds[i]);
+      await db.transactions.update(t.id, {
+        amount: newBreakdown.reduce((s, v) => s + Number(v), 0),
+        amountBreakdown: newBreakdown,
+        sourceBalanceEntryIds: newSourceIds,
+      });
+    }
+  };
 
   const removeBalanceEntry = withErrorHandling("removeBalanceEntry", async (entryId) => {
     // Fetch fresh from DB rather than trusting the balanceEntries closure -
@@ -923,11 +1024,15 @@ export function ExpenseProvider({ children }) {
         .filter((e) => e.transferGroupId === entry.transferGroupId)
         .map((e) => e.id);
       await db.balanceEntries.bulkDelete(pairIds);
+      await cascadeRemoveFeeContributions(pairIds);
+      await reloadHierarchy();
       await reloadAssets();
       return;
     }
 
     await db.balanceEntries.delete(entryId);
+    await cascadeRemoveFeeContributions([entryId]);
+    await reloadHierarchy();
     await reloadAssets();
   });
 
@@ -964,7 +1069,7 @@ export function ExpenseProvider({ children }) {
     // than creating a true duplicate row.
     if (existing) return existing.id;
 
-    const id = await db.accountTypes.add({ name: trimmed });
+    const id = await db.accountTypes.add({ name: trimmed, createdAt: new Date() });
     await reloadAssets();
     return id;
   });
@@ -1417,7 +1522,7 @@ export function ExpenseProvider({ children }) {
   // Bucket operations
   // ---------------------------
   const addBucket = withErrorHandling("addBucket", async (name) => {
-    return await db.buckets.add({ name });
+    return await db.buckets.add({ name, createdAt: new Date() });
   });
 
   const removeBucket = withErrorHandling("removeBucket", async (id) => {
@@ -1437,7 +1542,7 @@ export function ExpenseProvider({ children }) {
       // Remove from any other bucket and assign to this one (categories
       // belong to exactly one bucket at a time)
       await db.bucketAssignments.where({ category }).delete();
-      await db.bucketAssignments.add({ bucketId, category });
+      await db.bucketAssignments.add({ bucketId, category, createdAt: new Date() });
     }
   });
 
