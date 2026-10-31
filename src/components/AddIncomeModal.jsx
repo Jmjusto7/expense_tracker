@@ -1,24 +1,29 @@
 import { useState } from "react";
-import { X, TrendingUp } from "lucide-react";
+import { TrendingUp } from "lucide-react";
+import { toDateInputValue } from "../utils/dateHelpers";
 import { useExpenseContext } from "../context/ExpenseContext";
 import CategoryAutocompleteInput from "./transaction-row/CategoryAutocompleteInput";
+import Dialog, { Field, inputClass } from "./Dialog";
 
 export default function AddIncomeModal({ accountId, onClose }) {
   const { addIncomeEntry, incomeCategories } = useExpenseContext();
 
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(toDateInputValue());
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState("");
   const [comments, setComments] = useState("");
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [saving, setSaving] = useState(false);
 
-  const handleSave = async () => {
+  const save = async ({ keepOpen }) => {
     if (!date) return setError("Please pick a date.");
 
     const n = Number(amount);
-    if (amount === "" || isNaN(n) || n <= 0)
-      return setError("Please enter a positive amount.");
+    if (amount === "" || isNaN(n) || n <= 0) return setError("Please enter a positive amount.");
 
+    setSaving(true);
+    setError("");
     try {
       await addIncomeEntry(accountId, {
         date,
@@ -26,89 +31,58 @@ export default function AddIncomeModal({ accountId, onClose }) {
         category: category.trim(),
         comments: comments.trim(),
       });
-      onClose();
+      if (!keepOpen) return onClose();
+      setNotice(`Saved ${n.toLocaleString()}${category.trim() ? ` (${category.trim()})` : ""}.`);
+      setAmount("");
+      setComments("");
     } catch (err) {
       console.error("Failed to add income:", err);
       setError("Failed to save. Please try again.");
     }
+    setSaving(false);
   };
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center bg-ink/40 z-50">
-      <div className="bg-surface w-[90%] max-w-md rounded-xl shadow-lg p-6 relative">
-        <button
-          onClick={onClose}
-          className="absolute top-3 right-3 text-ink-muted hover:text-ink"
-        >
-          <X size={18} />
-        </button>
+    <Dialog
+      title="Add Income"
+      icon={TrendingUp}
+      onClose={onClose}
+      onSubmit={() => save({ keepOpen: false })}
+      onSubmitAnother={() => save({ keepOpen: true })}
+      busy={saving}
+      error={error}
+    >
+      {notice && (
+        <p role="status" className="text-sm text-ledger-dark bg-ledger-soft rounded-md px-3 py-2 mb-4">
+          {notice}
+        </p>
+      )}
+      <div className="flex flex-col gap-4">
+        <Field label="Date" htmlFor="income-date">
+          <input id="income-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputClass} />
+        </Field>
 
-        <div className="flex items-center gap-2 mb-4">
-          <TrendingUp size={18} className="text-ledger-dark" />
-          <h2 className="font-display text-xl text-ink">Add Income</h2>
-        </div>
+        <Field label="Amount" htmlFor="income-amount">
+          <input
+            id="income-amount"
+            type="text"
+            inputMode="decimal"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            className={`money ${inputClass}`}
+            placeholder="e.g. 25000"
+            data-autofocus
+          />
+        </Field>
 
-        <div className="flex flex-col gap-4">
-          <div>
-            <label className="block text-sm font-medium text-ink-muted mb-1">Date</label>
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              className="w-full border border-border rounded-md px-3 py-2 text-ink bg-surface focus:ring-2 focus:ring-ledger focus:outline-none"
-            />
-          </div>
+        <Field label="Category (optional)" htmlFor="income-category">
+          <CategoryAutocompleteInput id="income-category" value={category} onChange={setCategory} categories={incomeCategories} />
+        </Field>
 
-          <div>
-            <label className="block text-sm font-medium text-ink-muted mb-1">Amount</label>
-            <input
-              type="text"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              className="money w-full border border-border rounded-md px-3 py-2 text-ink bg-surface focus:ring-2 focus:ring-ledger focus:outline-none"
-              placeholder="e.g. 25000"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-ink-muted mb-1">
-              Category (optional)
-            </label>
-            <CategoryAutocompleteInput
-              value={category}
-              onChange={setCategory}
-              categories={incomeCategories}
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-ink-muted mb-1">Comments</label>
-            <input
-              type="text"
-              value={comments}
-              onChange={(e) => setComments(e.target.value)}
-              className="w-full border border-border rounded-md px-3 py-2 text-sm bg-surface text-ink focus:ring-2 focus:ring-ledger focus:outline-none"
-            />
-          </div>
-
-          {error && <p className="text-alert text-sm">{error}</p>}
-
-          <div className="flex justify-end gap-3 mt-2">
-            <button
-              onClick={onClose}
-              className="border border-border text-ink-muted px-4 py-2 rounded-lg hover:bg-surface-sunken transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleSave}
-              className="bg-ledger text-white px-4 py-2 rounded-lg hover:bg-ledger-dark transition-colors"
-            >
-              Save
-            </button>
-          </div>
-        </div>
+        <Field label="Comments" htmlFor="income-comments">
+          <input id="income-comments" type="text" value={comments} onChange={(e) => setComments(e.target.value)} className={inputClass} />
+        </Field>
       </div>
-    </div>
+    </Dialog>
   );
 }

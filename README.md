@@ -20,6 +20,7 @@ npm run dev
 | `npm run preview` | Serve the production build locally |
 | `npm run lint` | Run ESLint |
 | `npm test` | Run the Vitest suite once (`npm run test:watch` to watch) |
+| `npm run icons` | Regenerate the PWA icons in `public/` from `public/favicon.svg` |
 
 ## Your data
 
@@ -55,8 +56,20 @@ device's data:
 - An entry changed on both devices since the last sync, or deleted on one and changed on the
   other, is shown for you to choose which version to keep.
 - Same day + category with different amounts gets the same *Keep / Keep / Merge* choice as import.
-- Sync only runs when you press the button. The Google sign-in token is kept in memory only.
 - *Clear DB* resets this device; the next sync brings the Drive copy back.
+
+### When sync runs
+
+- **Manually**: tap the sync status in the top bar (phones: the cloud icon), or *Settings → Sync*.
+  This is also how you sign in to Google - roughly once an hour, since the sign-in token is kept
+  in memory only and expires.
+- **Automatically**, while you're signed in: about 30 seconds after your last change, when the
+  device comes back online, and when you return to the app (pulling other devices' changes if
+  the last sync was more than 15 minutes ago). It waits while a form is open.
+- If both devices changed the same entry, automatic sync stops at **Needs input**; tap it to
+  choose which version to keep.
+- Offline, everything keeps working on this device and the status shows how many changes are
+  waiting; they upload once you're back online and signed in.
 
 ### One-time Google Cloud setup (no cost)
 
@@ -75,3 +88,52 @@ While the app is in *Testing*, Google may occasionally ask you to approve access
 the only scope is non-sensitive, you can publish it (*Audience → Publish app*) without a review.
 
 To try sync on one computer, use two Chrome profiles - each has its own local database.
+
+## Install on Android (and offline use)
+
+The app is a PWA: once loaded over HTTPS it works with no connection.
+
+1. Open the hosted URL (e.g. `https://expense-tracker.pages.dev`) in Chrome.
+2. Chrome menu (⋮) → **Install app** (or *Add to Home screen*).
+3. Open it from the home screen; it runs full-screen with a bottom tab bar.
+
+- Data lives in this browser's storage on the phone. The app asks the browser to keep it
+  persistent; *Settings → Sync* shows whether that was granted. Sync to Drive or export
+  regularly anyway.
+- When a new version is deployed, a **New version available** prompt appears; reloading keeps
+  your data.
+- Use the production URL on the phone. Each Cloudflare preview URL is a different site, with its
+  own empty storage, and Google sign-in won't work there unless you add that origin too.
+
+## Deploy (Cloudflare Pages, free)
+
+**From Git** - Cloudflare dashboard → *Workers & Pages → Create → Pages → Connect to Git*:
+
+| Setting | Value |
+| --- | --- |
+| Project name | `expense-tracker` (gives `https://expense-tracker.pages.dev`) |
+| Framework preset | Vite |
+| Build command | `npm run build` |
+| Build output directory | `dist` |
+| Environment variable | `VITE_GOOGLE_CLIENT_ID` = your OAuth client ID (public, not a secret) |
+
+**Or manually** from this folder (the client ID is read from `.env.local` at build time):
+
+```bash
+npm run build
+npx wrangler pages deploy dist --project-name expense-tracker
+```
+
+Then in the Google Cloud console → *Clients* → your web client, add the authorized JavaScript
+origin `https://expense-tracker.pages.dev`.
+
+The app uses client-side routes (`/expenses/2026/...`); the service worker serves `index.html`
+for them once installed, and Cloudflare Pages does the same for the first visit when there is no
+`404.html`.
+
+### Before relying on it: phone sign-in check
+
+After the first deploy, install the app on the phone and press Sync once. If the Google sign-in
+popup returns to the installed app and sync completes, automatic sync works there. If it
+doesn't, sync from a normal Chrome tab on the same URL instead; it shares the installed app's
+data because both are the same site in the same browser.

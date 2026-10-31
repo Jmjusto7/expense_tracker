@@ -1,69 +1,15 @@
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
-import { formatCurrencyPrecise } from "../utils/formatCurrency";
 import { getCurrentValuePhp } from "../utils/balanceHelpers";
+import DonutChart from "./DonutChart";
 
-// Same coordinated palette as ExpensePieChart, for visual consistency
-// across the app's charts.
-const COLORS = [
-  "#1f6f5c",
-  "#b8622e",
-  "#3d8a76",
-  "#d4884f",
-  "#164f42",
-  "#8a4a1f",
-  "#6b8a7f",
-  "#a1423b",
-];
-
-export default function AssetCompositionChart({
-  accounts,
-  balanceEntries,
-  heightClassName = "h-72",
-  innerRadius = 55,
-  outerRadius = 100,
-}) {
-  // Negative values (e.g. a credit card) don't make sense as a positive
-  // "share of assets" slice - excluded here rather than distorting the
-  // chart, not silently dropped from the app overall. A foreign account
-  // with no price recorded yet (null value) is excluded the same way,
-  // rather than silently treated as 0.
+// Negative (cards) and unpriced accounts can't be a share of assets, so they're left out.
+export default function AssetCompositionChart({ accounts, balanceEntries, heightClassName = "h-56" }) {
   const data = accounts
     .map((acc) => ({ name: acc.name, value: getCurrentValuePhp(balanceEntries, accounts, acc.id) }))
-    .filter((d) => d.value != null && d.value > 0)
-    .sort((a, b) => b.value - a.value);
+    .filter((d) => d.value != null && d.value > 0);
 
   if (data.length === 0) {
-    return (
-      <p className="text-ink-muted text-sm text-center py-10">
-        No positive balances to chart yet.
-      </p>
-    );
+    return <p className="text-ink-muted text-sm text-center py-10">No positive balances to chart yet.</p>;
   }
 
-  return (
-    <div className={`money w-full ${heightClassName}`}>
-      <ResponsiveContainer>
-        <PieChart>
-          <Pie
-            data={data}
-            dataKey="value"
-            nameKey="name"
-            cx="50%"
-            cy="50%"
-            innerRadius={innerRadius}
-            outerRadius={outerRadius}
-            label={({ name, value }) => `${name}: ${formatCurrencyPrecise(value)}`}
-          >
-            {data.map((entry, index) => (
-              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-            ))}
-          </Pie>
-          <Tooltip
-            formatter={(value) => formatCurrencyPrecise(value)}
-            contentStyle={{ fontFamily: "var(--font-mono)", fontSize: 13 }}
-          />
-        </PieChart>
-      </ResponsiveContainer>
-    </div>
-  );
+  return <DonutChart data={data} heightClassName={heightClassName} />;
 }

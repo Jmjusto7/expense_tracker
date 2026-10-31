@@ -1,7 +1,7 @@
 // src/components/AccountBalanceChart.jsx
-import { ResponsiveContainer, ComposedChart, Line, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
+import { ResponsiveContainer, ComposedChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from "recharts";
 import { formatDate } from "../utils/dateHelpers";
-import { formatCurrency } from "../utils/formatCurrency";
+import { valueFormatters, Y_AXIS_WIDTH } from "../utils/chartFormat";
 import { getReconciliations, getIncomeEntries, getImpliedSpendPeriods } from "../utils/balanceHelpers";
 
 // Builds the chart's data points directly from the already-tested
@@ -64,8 +64,10 @@ function buildChartData(entries, accountId) {
   return points;
 }
 
-export default function AccountBalanceChart({ entries, accountId }) {
+// `unit`: null for PHP accounts, otherwise the account's own unit (values are units held).
+export default function AccountBalanceChart({ entries, accountId, unit = null }) {
   const data = buildChartData(entries, accountId);
+  const format = valueFormatters(unit);
 
   if (data.length < 2) {
     return (
@@ -86,11 +88,12 @@ export default function AccountBalanceChart({ entries, accountId }) {
             tick={{ fontSize: 11 }}
             interval="preserveStartEnd"
           />
-          <YAxis stroke="#6b7570" tick={{ fontSize: 12 }} />
+          <YAxis stroke="#6b7570" tick={{ fontSize: 12 }} width={Y_AXIS_WIDTH} tickFormatter={format.tick} />
           <Tooltip
-            formatter={(value, name) => [formatCurrency(value), name === "book" ? "Book" : "Reconciled"]}
+            formatter={(value, _name, item) => [format.full(value), item.dataKey === "book" ? "Book" : "Reconciled"]}
             contentStyle={{ fontFamily: "var(--font-mono)", fontSize: 13 }}
           />
+          <Legend wrapperStyle={{ fontSize: 12 }} />
 
           {/* Book: rises with income, resets at each reconciliation. */}
           <Line

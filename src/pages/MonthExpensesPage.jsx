@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, Link } from "react-router-dom";
 import { useExpenseContext } from "../context/ExpenseContext";
 import { useFilter } from "../context/FilterContext";
 import { Plus, Trash2 } from "lucide-react";
@@ -11,7 +11,6 @@ import Breadcrumbs from "../components/Breadcrumbs";
 
 export default function MonthExpensesPage() {
   const { year } = useParams();
-  const navigate = useNavigate();
   const { years, addMonth, removeMonth } = useExpenseContext();
   const { matches, hasActiveFilters } = useFilter();
 
@@ -66,6 +65,7 @@ export default function MonthExpensesPage() {
       {availableMonths.length > 0 && yearId && (
         <div className="flex items-center gap-2 mb-6">
           <select
+            aria-label="Month to add"
             value={selectedMonth}
             onChange={(e) => setSelectedMonth(e.target.value)}
             className="border border-border rounded-lg px-3 py-2 text-ink bg-surface focus:ring-2 focus:ring-ledger focus:outline-none"
@@ -97,7 +97,7 @@ export default function MonthExpensesPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {yearObj.months
+          {[...yearObj.months]
             .sort((a, b) => ALL_MONTHS.indexOf(b.name) - ALL_MONTHS.indexOf(a.name))
             .map((month) => {
               const total = month.days?.reduce(
@@ -114,16 +114,15 @@ export default function MonthExpensesPage() {
               return (
                 <div
                   key={month.id}
-                  className={`group flex justify-between items-center bg-surface border border-border p-4 rounded-lg hover:border-ledger cursor-pointer transition-colors ${
-                    noMatches ? "opacity-50" : ""
-                  }`}
-                  onClick={() =>
-                    navigate(`/expenses/${year}/${month.name}`, {
-                      state: { yearId, monthId: month.id },
-                    })
-                  }
+                  className={`group relative flex justify-between items-center bg-surface border border-border p-4 rounded-lg hover:border-ledger focus-within:border-ledger transition-colors ${noMatches ? "opacity-50" : ""
+                    }`}
                 >
-                  <span className="text-lg font-medium text-ink">{month.name}</span>
+                  <Link
+                    to={`/expenses/${year}/${month.name}`}
+                    className="text-lg font-medium text-ink focus:outline-none after:absolute after:inset-0 after:rounded-lg"
+                  >
+                    {month.name}
+                  </Link>
 
                   <div className="flex items-center gap-3">
                     <span className="money font-semibold text-ledger-dark">
@@ -132,8 +131,9 @@ export default function MonthExpensesPage() {
 
                     <ConfirmButton
                       onConfirm={() => handleRemoveMonth(month.id)}
-                      className="opacity-70 group-hover:opacity-100 text-ink-muted hover:text-alert transition-opacity p-1"
-                      confirmClassName="text-alert text-xs font-medium px-2 py-1 rounded-md bg-alert-soft"
+                      aria-label={`Delete ${month.name}`}
+                      className="relative z-10 [@media(hover:hover)]:opacity-70 group-hover:opacity-100 text-ink-muted hover:text-alert transition-opacity p-1"
+                      confirmClassName="relative z-10 text-alert text-xs font-medium px-2 py-1 rounded-md bg-alert-soft"
                       title={`Delete ${month.name}? Removes ${dayCount} day${dayCount === 1 ? "" : "s"} and ${txCount} transaction${txCount === 1 ? "" : "s"}.`}
                       confirmLabel="Sure?"
                     >

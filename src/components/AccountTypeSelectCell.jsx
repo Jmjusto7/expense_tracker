@@ -1,9 +1,11 @@
 // Account Type dropdown, with a "+ Add Type" option that hands control
 // back to the parent (via onRequestAdd) rather than managing the modal
 // itself - see useInlineAddAccountType. Mirrors TravelSelectCell.
-export default function AccountTypeSelectCell({ value, onChange, onRequestAdd, accountTypes, disabled = false }) {
+export default function AccountTypeSelectCell({ value, onChange, onRequestAdd, accountTypes, disabled = false, id, "aria-label": ariaLabel }) {
   return (
     <select
+      id={id}
+      aria-label={ariaLabel}
       value={value ?? ""}
       onChange={(e) => {
         const val = e.target.value;

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { Trash2, Plus } from "lucide-react";
 import { useExpenseContext } from "../context/ExpenseContext";
 import { useFilter } from "../context/FilterContext";
@@ -8,7 +8,6 @@ import ExpenseAnalytics from "../components/ExpenseAnalytics";
 import ConfirmButton from "../components/ConfirmButton";
 
 export default function YearExpensesPage() {
-  const navigate = useNavigate();
   const { years, addYear, removeYear } = useExpenseContext();
   const { matches, hasActiveFilters } = useFilter();
 
@@ -86,20 +85,24 @@ export default function YearExpensesPage() {
           return (
             <div
               key={yearObj.id}
-              className={`group flex justify-between items-center bg-surface border border-border p-4 rounded-lg hover:border-ledger cursor-pointer transition-colors ${
-                noMatches ? "opacity-50" : ""
-              }`}
-              onClick={() => navigate(`/expenses/${yearObj.year}`)}
+              className={`group relative flex justify-between items-center bg-surface border border-border p-4 rounded-lg hover:border-ledger focus-within:border-ledger transition-colors ${noMatches ? "opacity-50" : ""
+                }`}
             >
-              <span className="text-lg font-medium text-ink">{yearObj.year}</span>
+              <Link
+                to={`/expenses/${yearObj.year}`}
+                className="text-lg font-medium text-ink focus:outline-none after:absolute after:inset-0 after:rounded-lg"
+              >
+                {yearObj.year}
+              </Link>
               <div className="flex items-center gap-3">
                 <span className="money font-semibold text-ledger-dark">
                   {formatCurrency(total)}
                 </span>
                 <ConfirmButton
                   onConfirm={() => removeYear(yearObj.id)}
-                  className="opacity-70 group-hover:opacity-100 text-ink-muted hover:text-alert transition-opacity p-1"
-                  confirmClassName="text-alert text-xs font-medium px-2 py-1 rounded-md bg-alert-soft"
+                  aria-label={`Delete ${yearObj.year}`}
+                  className="relative z-10 [@media(hover:hover)]:opacity-70 group-hover:opacity-100 text-ink-muted hover:text-alert transition-opacity p-1"
+                  confirmClassName="relative z-10 text-alert text-xs font-medium px-2 py-1 rounded-md bg-alert-soft"
                   title={`Delete ${yearObj.year}? Removes ${months} month${months === 1 ? "" : "s"} and ${transactions} transaction${transactions === 1 ? "" : "s"}.`}
                   confirmLabel="Sure?"
                 >

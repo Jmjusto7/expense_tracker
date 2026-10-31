@@ -116,26 +116,59 @@ describe('Google Drive sync', () => {
         expect(shadows[0]).toMatchObject({ accountId: 'a', amount: -12, sourceTransactionId: 't' })
     })
 
-    it('refuses to write if this device changed during the sync', async () => {
+    it('refuses to overwrite this device if it changed during the sync', async () => {
         const { result } = await renderExpenseContext()
+        await sync(result)
+        writeRemote({ travels: [{ id: 'remote-trip', title: 'Cebu' }] })
         const prepared = await result.current.prepareSync()
         await db.travels.add({ title: 'Added meanwhile' })
 
         await expect(result.current.commitSync(prepared)).rejects.toThrow(/changed during sync/)
-        expect(store.file).toBeNull()
-        expect(await db.travels.count()).toBe(1)
+        expect((await db.travels.toArray()).map((t) => t.title)).toEqual(['Added meanwhile'])
     })
 
     it('does not upload over a newer Drive version', async () => {
         const { result } = await renderExpenseContext()
-        await act(async () => result.current.addTravel({ title: 'Tokyo', startDate: '2026-03-01', endDate: '2026-03-07' }))
         await sync(result)
+        await act(async () => result.current.addTravel({ title: 'Tokyo', startDate: '2026-03-01', endDate: '2026-03-07' }))
         const prepared = await result.current.prepareSync()
         writeRemote(remoteTables())
         const versionBefore = store.file.version
 
         await expect(result.current.commitSync(prepared)).rejects.toThrow(/updated from another device/)
         expect(store.file.version).toBe(versionBefore)
+    })
+
+    it('skips the local rewrite and the upload when nothing changed', async () => {
+        const { result } = await renderExpenseContext()
+        await act(async () => result.current.addTravel({ title: 'Tokyo', startDate: '2026-03-01', endDate: '2026-03-07' }))
+        await sync(result)
+        const versionBefore = store.file.version
+        const clearSpy = vi.spyOn(db.travels, 'clear')
+
+        await sync(result)
+
+        expect(store.file.version).toBe(versionBefore)
+        expect(clearSpy).not.toHaveBeenCalled()
+        clearSpy.mockRestore()
+    })
+
+    it('reports pending changes until they are uploaded', async () => {
+        const { result } = await renderExpenseContext()
+        expect(await result.current.hasPendingChanges()).toBe(false)
+
+        await act(async () => result.current.addTravel({ title: 'Tokyo', startDate: '2026-03-01', endDate: '2026-03-07' }))
+        expect(await result.current.hasPendingChanges()).toBe(true)
+
+        await sync(result)
+        expect(await result.current.hasPendingChanges()).toBe(false)
+
+        await act(async () => result.current.updateTravel((await db.travels.toArray())[0].id, { title: 'Tokyo 2' }))
+        const prepared = await result.current.prepareSync()
+        const drive = await import('../sync/driveClient')
+        drive.updateSyncFile.mockRejectedValueOnce(new Error('network down'))
+        await expect(result.current.commitSync(prepared)).rejects.toThrow('network down')
+        expect(await result.current.hasPendingChanges()).toBe(true)
     })
 
     it('treats a different Drive file as a first sync instead of deleting local data', async () => {

@@ -1,17 +1,28 @@
 import { useParams } from "react-router-dom";
 import { useState, useMemo } from "react";
 import { useExpenseContext } from "../context/ExpenseContext";
-import { Plane, ChevronRight, X } from "lucide-react";
-import { formatDate, ALL_MONTHS, formatWeekday } from "../utils/dateHelpers";
+import { Plane, ChevronRight, X, Plus } from "lucide-react";
+import { formatDate, ALL_MONTHS, formatWeekday, toDateInputValue } from "../utils/dateHelpers";
 import { formatCurrency, formatCurrencyPrecise } from "../utils/formatCurrency";
 import { filterTransactionsByTravel, sumAmounts, findTravelById } from "../utils/travelHelpers";
 import { useBucketsWithCategories } from "../hooks/useBucketsWithCategories";
 import ExpensePieChart from "../components/ExpensePieChart";
-import BreakdownGrid from "../components/BreakdownGrid"; import {
+import BreakdownGrid from "../components/BreakdownGrid";
+import AddTransactionModal from "../components/AddTransactionModal";
+import {
   classifyTransactions,
   groupByEffectiveBucket,
   groupByCategory,
-} from "../utils/transactionClassification"; import Breadcrumbs from "../components/Breadcrumbs";
+} from "../utils/transactionClassification";
+import Breadcrumbs from "../components/Breadcrumbs";
+
+// Today when the trip is underway, otherwise the trip's first day.
+const defaultExpenseDate = (travel) => {
+  const today = toDateInputValue();
+  const start = toDateInputValue(new Date(travel.startDate));
+  const end = toDateInputValue(new Date(travel.endDate));
+  return today >= start && today <= end ? `${today}T00:00:00` : `${start}T00:00:00`;
+};
 
 export default function TravelDetailPage() {
   const { travelId } = useParams();
@@ -35,6 +46,7 @@ export default function TravelDetailPage() {
   // -------------------------
   const [drillBucketId, setDrillBucketId] = useState(null);
   const [selectedCategory, setSelectedCategory] = useState(null);
+  const [showAddExpense, setShowAddExpense] = useState(false);
 
   const drillBucket = buckets.find((b) => b.id === drillBucketId) || null;
 
@@ -155,11 +167,20 @@ export default function TravelDetailPage() {
       <Breadcrumbs items={[{ label: "Travels", to: "/travels" }, { label: travel.title }]} />
 
       <div className="mt-3 mb-6">
-        <div className="flex items-center gap-2">
-          <Plane size={18} className="text-travel-dark" />
-          <h1 className="font-display text-2xl text-ink">
-            {travel.title}
-          </h1>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <Plane size={18} className="text-travel-dark shrink-0" aria-hidden="true" />
+            <h1 className="font-display text-2xl text-ink break-words">
+              {travel.title}
+            </h1>
+          </div>
+          <button
+            onClick={() => setShowAddExpense(true)}
+            className="flex items-center gap-2 bg-travel hover:bg-travel-dark text-white px-4 py-2 rounded-lg transition-colors"
+          >
+            <Plus size={16} aria-hidden="true" />
+            Add expense
+          </button>
         </div>
 
         <div className="text-ink-muted mt-1">
@@ -167,9 +188,23 @@ export default function TravelDetailPage() {
         </div>
 
         <div className="money text-2xl font-bold text-travel-dark mt-3">
-          {formatCurrency(total)}
+          {formatCurrency(total)} <span className="text-sm font-normal text-ink-muted">whole trip</span>
         </div>
+        {(drillBucket || selectedCategory) && (
+          <div className="money text-sm text-ink-muted mt-1">
+            Showing {formatCurrency(sumAmounts(visibleTransactions))} for{" "}
+            {selectedCategory ?? drillBucket.name}
+          </div>
+        )}
       </div>
+
+      {showAddExpense && (
+        <AddTransactionModal
+          defaultTravelId={travel.id}
+          defaultDate={defaultExpenseDate(travel)}
+          onClose={() => setShowAddExpense(false)}
+        />
+      )}
 
       {/* Bucket / Category Drill-down */}
       {currentLevelData.length > 0 && (
@@ -192,7 +227,7 @@ export default function TravelDetailPage() {
 
           <div className="flex flex-col md:flex-row gap-6">
             <div className="flex-1 flex flex-col items-center">
-              <ExpensePieChart data={currentLevelData} />
+              <ExpensePieChart data={currentLevelData} legend={false} />
             </div>
 
             <div className="flex-[0.8] flex flex-col gap-2">
@@ -255,19 +290,21 @@ export default function TravelDetailPage() {
               </span>
             </div>
 
-            <table className="w-full text-left border-collapse text-sm">
-              <tbody>
-                {dayTransactions.map((t) => (
-                  <tr key={t.id}>
-                    <td className="border-t border-border px-3 py-2 text-ink w-[25%]">{t.category}</td>
-                    <td className="border-t border-border px-3 py-2 text-ink-muted">{t.comments}</td>
-                    <td className="money border-t border-border px-3 py-2 text-right font-semibold text-travel-dark w-[120px]">
-                      {formatCurrency(t.amount)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[320px] text-left border-collapse text-sm">
+                <tbody>
+                  {dayTransactions.map((t) => (
+                    <tr key={t.id}>
+                      <td className="border-t border-border px-3 py-2 text-ink w-[25%] break-words">{t.category}</td>
+                      <td className="border-t border-border px-3 py-2 text-ink-muted break-words">{t.comments}</td>
+                      <td className="money border-t border-border px-3 py-2 text-right font-semibold text-travel-dark whitespace-nowrap">
+                        {formatCurrency(t.amount)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         ))}
 

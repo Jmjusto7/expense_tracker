@@ -1,4 +1,4 @@
-import { X } from "lucide-react";
+import { X, Plane } from "lucide-react";
 import { useFilter } from "../context/FilterContext";
 import { formatMonthYear } from "../utils/dateHelpers";
 import { TRAVEL_FILTER_ID } from "../utils/travelHelpers";
@@ -14,8 +14,8 @@ function Chip({ children, onRemove, accent = "ledger" }) {
   return (
     <span className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border ${styles}`}>
       {children}
-      <button onClick={onRemove} className="hover:opacity-70" title="Remove filter">
-        <X size={12} />
+      <button type="button" onClick={onRemove} className="p-0.5 -mr-1 rounded-full hover:opacity-70" title="Remove filter" aria-label="Remove filter">
+        <X size={12} aria-hidden="true" />
       </button>
     </span>
   );
@@ -68,7 +68,8 @@ export default function FilterBar() {
       {selectedBucketIds.map((id) =>
         id === TRAVEL_FILTER_ID ? (
           <Chip key={id} accent="travel" onRemove={() => removeBucketFilter(id)}>
-            ✈ Travel
+            <Plane size={12} aria-hidden="true" />
+            Travel
           </Chip>
         ) : (
           <Chip key={id} accent="ledger" onRemove={() => removeBucketFilter(id)}>

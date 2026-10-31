@@ -1,313 +1,164 @@
-import { useState, useRef } from "react";
-import { X } from "lucide-react";
-import DatePicker from "react-date-picker";
-import "react-date-picker/dist/DatePicker.css";
-import "react-calendar/dist/Calendar.css";
+import { useState, useRef, useMemo } from "react";
+import { Plus } from "lucide-react";
 import { useExpenseContext } from "../context/ExpenseContext";
-import { ALL_MONTHS, computeDefaultTransactionDate, formatDate } from "../utils/dateHelpers";
-import { parseAmountExpression } from "../utils/amountHelpers";
-import { findRowsTagConflict, tagConflictMessage } from "../utils/transactionMerge";
+import { ALL_MONTHS, formatDate, toDateInputValue } from "../utils/dateHelpers";
+import { findTravelForDate } from "../utils/travelHelpers";
+import { blankRow, buildRowUpserts, getLastPaidFrom, rememberPaidFrom } from "../utils/transactionRows";
 import { useInlineAddTravel } from "../hooks/useInlineAddTravel";
-import CategoryAutocompleteInput from "./transaction-row/CategoryAutocompleteInput";
-import TravelSelectCell from "./transaction-row/TravelSelectCell";
-import AccountSelectCell from "./transaction-row/AccountSelectCell";
-import AmountPreview from "./AmountPreview";
+import TransactionRowsEditor from "./transaction-row/TransactionRowsEditor";
+import Dialog, { Field, inputClass } from "./Dialog";
 
-const getRowId = () => Date.now() + Math.floor(Math.random() * 1000);
+const parseLocalDate = (value) => (value ? new Date(`${value}T00:00:00`) : null);
 
-const blankRow = () => ({
-  id: getRowId(),
-  category: "",
-  amount: "",
-  comments: "",
-  travelId: "",
-  accountId: null,
-});
+// Without year/month this is "quick add" (any date). With them, the date is
+// limited to that month and defaults to today when it's the current month.
+// Picking a day that already has transactions is fine - rows merge by category.
+export default function AddTransactionModal({ year, month, onClose, onSaved, defaultTravelId = null, defaultDate = null }) {
+  const { saveDayTransactions, categories, travels, accounts, years } = useExpenseContext();
 
-const toDateInputValue = (date) => date.toISOString().slice(0, 10);
+  const monthContext = year != null && month != null;
+  const monthIndex = monthContext ? ALL_MONTHS.indexOf(month) : null;
 
-// year/month are optional: when omitted, the modal runs in "quick add"
-// mode - a plain, freely-editable date field (any day, any month, any
-// year) instead of the month-locked calendar, since there's no pre-picked
-// month to constrain it to. Year/month/day get resolved (and created if
-// missing) at save time instead of being required up front.
-export default function AddTransactionModal({
-  year,
-  month,
-  existingDays = [],
-  onClose,
-  onSaved,
-}) {
-  const {
-    saveDayTransactions,
-    categories,
-    travels,
-    accounts,
-  } = useExpenseContext();
+  const initialDate = useMemo(() => {
+    if (defaultDate) return toDateInputValue(new Date(defaultDate));
+    const today = new Date();
+    if (!monthContext || (today.getFullYear() === year && today.getMonth() === monthIndex)) return toDateInputValue(today);
+    return "";
+  }, [defaultDate, monthContext, year, monthIndex]);
 
-  const quickAdd = year == null || month == null;
+  const makeRow = (forDate) => {
+    if (defaultTravelId) return blankRow({ travelId: defaultTravelId, accountId: getLastPaidFrom(accounts) });
+    const match = findTravelForDate(travels, parseLocalDate(forDate));
+    return blankRow({ travelId: match?.id ?? "", travelAuto: Boolean(match), accountId: getLastPaidFrom(accounts) });
+  };
 
-  const monthIndex = quickAdd ? null : ALL_MONTHS.indexOf(month);
-  const defaultDate = quickAdd ? new Date() : computeDefaultTransactionDate(year, monthIndex, existingDays);
-
-  const [selectedDate, setSelectedDate] = useState(defaultDate);
-  const [isCalendarOpen, setIsCalendarOpen] = useState(!quickAdd && !defaultDate);
-  const [quickDateValue, setQuickDateValue] = useState(toDateInputValue(defaultDate || new Date()));
-  const [rows, setRows] = useState([blankRow()]);
-
+  const [date, setDate] = useState(initialDate);
+  const [rows, setRows] = useState(() => [makeRow(initialDate)]);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [saving, setSaving] = useState(false);
   const inputRefs = useRef({});
 
-  const handleChange = (id, field, value) => {
-    setRows(rows.map(r => (r.id === id ? { ...r, [field]: value } : r)));
-  };
+  const updateRow = (id, patch) => setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
 
-  const { requestAddTravel, inlineAddTravelModal } = useInlineAddTravel(
-    (rowId, newTravelId) => handleChange(rowId, "travelId", newTravelId)
+  const { requestAddTravel, inlineAddTravelModal } = useInlineAddTravel((rowId, newTravelId) =>
+    updateRow(rowId, { travelId: newTravelId, travelAuto: false })
   );
 
-  // -----------------------
-  // Row Management
-  // -----------------------
-  const handleAddRow = () => {
-    const newRow = blankRow();
-    setRows(prev => [...prev, newRow]);
-
-    setTimeout(() => {
-      inputRefs.current[`category-${newRow.id}`]?.focus();
-    }, 50);
+  const handleDateChange = (value) => {
+    setDate(value);
+    const match = findTravelForDate(travels, parseLocalDate(value));
+    // Re-match the trip only on rows the user hasn't tagged by hand.
+    setRows((prev) =>
+      prev.map((r) => (r.travelAuto || !r.travelId ? { ...r, travelId: match?.id ?? "", travelAuto: Boolean(match) } : r))
+    );
   };
 
-  // -----------------------
-  // Save
-  // -----------------------
-  const handleSave = async () => {
-    const effectiveDate = quickAdd ? (quickDateValue ? new Date(quickDateValue + "T00:00:00") : null) : selectedDate;
+  const addRow = () => {
+    const row = makeRow(date);
+    setRows((prev) => [...prev, row]);
+    setTimeout(() => inputRefs.current[`category-${row.id}`]?.focus(), 50);
+  };
 
-    if (!effectiveDate)
-      return alert("Please select a date first.");
+  const removeRow = (id) => setRows((prev) => (prev.length > 1 ? prev.filter((r) => r.id !== id) : prev));
 
-    const validRows = rows.filter(
-      r => r.category?.trim() && r.amount?.trim()
-    );
+  const existingCount = useMemo(() => {
+    const d = parseLocalDate(date);
+    if (!d) return 0;
+    const dayObj = years
+      .find((y) => y.year === d.getFullYear())
+      ?.months?.find((m) => m.name === ALL_MONTHS[d.getMonth()])
+      ?.days?.find((x) => x.day === d.getDate());
+    return dayObj?.transactions?.length ?? 0;
+  }, [years, date]);
 
-    if (!validRows.length)
-      return alert("Please fill at least one valid transaction.");
+  const save = async ({ keepOpen }) => {
+    const effectiveDate = parseLocalDate(date);
+    if (!effectiveDate) return setError("Please pick a date first.");
 
-    const upserts = [];
-    for (const r of validRows) {
-      const { total, breakdown, error } = parseAmountExpression(r.amount);
-      if (error) return alert(`Invalid amount in category "${r.category.trim()}": ${error}`);
+    const { upserts, error: rowError } = buildRowUpserts(rows, { dateLabel: formatDate(effectiveDate), travels, accounts });
+    if (rowError) return setError(rowError);
+    if (!upserts.length) return setError("Fill in a category and amount for at least one item.");
 
-      upserts.push({
-        category: r.category.trim(),
-        amount: total,
-        amountBreakdown: breakdown,
-        comments: r.comments?.trim() || "",
-        travelId: r.travelId || null,
-        accountId: r.accountId || null,
-      });
-    }
-
-    const rowConflict = findRowsTagConflict(upserts);
-    if (rowConflict) {
-      return alert(
-        tagConflictMessage({
-          category: rowConflict.category,
-          dateLabel: formatDate(effectiveDate),
-          conflict: rowConflict.conflict,
-          travels,
-          accounts,
-        })
-      );
-    }
-
+    setSaving(true);
+    setError("");
     try {
       await saveDayTransactions({ date: effectiveDate, upserts });
-
-      onSaved?.({
-        year: quickAdd ? effectiveDate.getFullYear() : year,
-        monthName: quickAdd ? ALL_MONTHS[effectiveDate.getMonth()] : month,
-      });
-      onClose();
+      rememberPaidFrom(upserts);
+      if (!keepOpen) {
+        onSaved?.({ year: effectiveDate.getFullYear(), monthName: ALL_MONTHS[effectiveDate.getMonth()] });
+        return onClose();
+      }
+      setNotice(`Saved ${upserts.length} item${upserts.length === 1 ? "" : "s"} to ${formatDate(effectiveDate)}.`);
+      const fresh = makeRow(date);
+      setRows([fresh]);
+      setTimeout(() => inputRefs.current[`category-${fresh.id}`]?.focus(), 50);
     } catch (err) {
       console.error("Failed to save transactions:", err);
-      alert(err.message || "Failed to save transactions.");
+      setError(err.message || "Failed to save transactions.");
     }
+    setSaving(false);
   };
 
-  const handleCommentKeyDown = (e, rowIndex) => {
-    if (e.key === "Tab" && rowIndex === rows.length - 1 && !e.shiftKey) {
-      e.preventDefault();
-      handleAddRow();
-    }
-  };
-
-  const monthStart = quickAdd ? null : new Date(year, monthIndex, 1);
-  const monthEnd = quickAdd ? null : new Date(year, monthIndex + 1, 0);
-
-  const hasDate = quickAdd ? Boolean(quickDateValue) : Boolean(selectedDate);
+  const monthStart = monthContext ? toDateInputValue(new Date(year, monthIndex, 1)) : undefined;
+  const monthEnd = monthContext ? toDateInputValue(new Date(year, monthIndex + 1, 0)) : undefined;
 
   return (
     <>
-      <div className="fixed inset-0 flex items-center justify-center bg-ink/40 z-50">
-        <div className="bg-surface w-[80%] max-w-7xl rounded-xl shadow-lg p-6 relative">
-          <button
-            onClick={onClose}
-            className="absolute top-3 right-3 text-ink-muted hover:text-ink"
+      <Dialog
+        title={monthContext ? `Add Transactions — ${month} ${year}` : "Add Transaction"}
+        icon={Plus}
+        size="xl"
+        onClose={onClose}
+        onSubmit={() => save({ keepOpen: false })}
+        onSubmitAnother={() => save({ keepOpen: true })}
+        busy={saving}
+        submitDisabled={!date}
+        error={error}
+      >
+        {notice && (
+          <p role="status" className="text-sm text-ledger-dark bg-ledger-soft rounded-md px-3 py-2 mb-4">
+            {notice}
+          </p>
+        )}
+
+        <div className="mb-5 max-w-xs">
+          <Field
+            label="Date"
+            htmlFor="add-tx-date"
+            hint={
+              !date
+                ? "Pick a date to start."
+                : existingCount > 0
+                  ? `This day already has ${existingCount} item${existingCount === 1 ? "" : "s"}; matching categories are combined.`
+                  : undefined
+            }
           >
-            <X size={18} />
-          </button>
-
-          <h2 className="font-display text-xl text-ink mb-6">
-            {quickAdd ? "Add Transaction" : `Add Transactions — ${month} ${year}`}
-          </h2>
-
-          {/* DATE PICKER */}
-          <div className="mb-6">
-            <label className="text-sm text-ink-muted mb-1 block">
-              Date
-            </label>
-
-            {quickAdd ? (
-              <input
-                type="date"
-                value={quickDateValue}
-                onChange={(e) => setQuickDateValue(e.target.value)}
-                className="border border-border rounded-md px-3 py-2 text-ink bg-surface focus:ring-2 focus:ring-ledger focus:outline-none"
-              />
-            ) : (
-              <DatePicker
-                onChange={(date) => {
-                  setSelectedDate(date);
-                  setIsCalendarOpen(false);
-                }}
-                value={selectedDate}
-                minDate={monthStart}
-                maxDate={monthEnd}
-                calendarIcon={null}
-                clearIcon={null}
-                format="y-MM-dd"
-                isOpen={isCalendarOpen}
-                calendarProps={{
-                  activeStartDate: selectedDate || monthStart,
-                  tileDisabled: ({ date, view }) => {
-                    if (view !== "month") return false;
-                    return date.getFullYear() === year &&
-                      date.getMonth() === monthIndex &&
-                      existingDays.includes(date.getDate());
-                  },
-                }}
-              />
-            )}
-          </div>
-
-          {/* TABLE */}
-          <div className="overflow-x-auto mb-4">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-surface-sunken text-ink-muted text-xs uppercase tracking-wide">
-                  <th className="border border-border px-3 py-2 w-[15%] font-medium">Category</th>
-                  <th className="border border-border px-3 py-2 w-[22%] font-medium">Amount</th>
-                  <th className="border border-border px-3 py-2 w-[18%] font-medium">Travel</th>
-                  <th className="border border-border px-3 py-2 w-[18%] font-medium">Paid From</th>
-                  <th className="border border-border px-3 py-2 w-[27%] font-medium">Comments</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {rows.map((r, i) => (
-                  <tr key={r.id}>
-                    {/* CATEGORY */}
-                    <td className="border border-border px-3 py-2">
-                      <CategoryAutocompleteInput
-                        value={r.category}
-                        onChange={(val) => handleChange(r.id, "category", val)}
-                        categories={categories}
-                        disabled={!hasDate}
-                        inputRef={(el) => (inputRefs.current[`category-${r.id}`] = el)}
-                      />
-                    </td>
-
-                    {/* AMOUNT */}
-                    <td className="border border-border px-3 py-2">
-                      <input
-                        type="text"
-                        value={r.amount}
-                        onChange={(e) =>
-                          handleChange(r.id, "amount", e.target.value)
-                        }
-                        className="money w-full border border-border rounded-md px-2 py-1.5 text-sm bg-transparent text-ink focus:ring-2 focus:ring-ledger focus:outline-none disabled:opacity-50"
-                        disabled={!hasDate}
-                      />
-                      <AmountPreview value={r.amount} />
-                    </td>
-
-                    {/* TRAVEL SELECT */}
-                    <td className="border border-border px-3 py-2">
-                      <TravelSelectCell
-                        value={r.travelId}
-                        onChange={(val) => handleChange(r.id, "travelId", val)}
-                        onRequestAdd={() => requestAddTravel(r.id)}
-                        travels={travels}
-                        disabled={!hasDate}
-                      />
-                    </td>
-
-                    {/* PAID FROM (ACCOUNT) SELECT */}
-                    <td className="border border-border px-3 py-2">
-                      <AccountSelectCell
-                        value={r.accountId}
-                        onChange={(val) => handleChange(r.id, "accountId", val)}
-                        accounts={accounts}
-                        disabled={!hasDate}
-                      />
-                    </td>
-
-                    {/* COMMENTS */}
-                    <td className="border border-border px-3 py-2">
-                      <input
-                        type="text"
-                        value={r.comments}
-                        onChange={(e) =>
-                          handleChange(r.id, "comments", e.target.value)
-                        }
-                        onKeyDown={(e) => handleCommentKeyDown(e, i)}
-                        className="w-full border border-border rounded-md px-2 py-1.5 text-sm bg-transparent text-ink focus:ring-2 focus:ring-ledger focus:outline-none disabled:opacity-50"
-                        disabled={!hasDate}
-                      />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <button
-            onClick={handleAddRow}
-            className="text-sm text-ledger-dark hover:underline mb-3 disabled:opacity-50 disabled:cursor-not-allowed"
-            disabled={!hasDate}
-          >
-            + Add Row
-          </button>
-
-          <div className="flex justify-end gap-3">
-            <button
-              onClick={onClose}
-              className="border border-border text-ink-muted px-4 py-2 rounded-lg hover:bg-surface-sunken transition-colors"
-            >
-              Cancel
-            </button>
-
-            <button
-              onClick={handleSave}
-              className="bg-ledger text-white px-4 py-2 rounded-lg hover:bg-ledger-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              disabled={!hasDate}
-            >
-              Save
-            </button>
-          </div>
+            <input
+              id="add-tx-date"
+              type="date"
+              value={date}
+              min={monthStart}
+              max={monthEnd}
+              onChange={(e) => handleDateChange(e.target.value)}
+              className={inputClass}
+            />
+          </Field>
         </div>
-      </div>
+
+        <TransactionRowsEditor
+          rows={rows}
+          onChange={updateRow}
+          onRemove={rows.length > 1 ? removeRow : undefined}
+          onAddRow={addRow}
+          onRequestAddTravel={requestAddTravel}
+          categories={categories}
+          travels={travels}
+          accounts={accounts}
+          disabled={!date || saving}
+          inputRefs={inputRefs}
+        />
+      </Dialog>
 
       {inlineAddTravelModal}
     </>

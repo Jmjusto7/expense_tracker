@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
-import { X, CreditCard } from "lucide-react";
+import { CreditCard } from "lucide-react";
 import { useExpenseContext } from "../context/ExpenseContext";
 import { useInlineAddAccountType } from "../hooks/useInlineAddAccountType";
 import AccountTypeSelectCell from "./AccountTypeSelectCell";
+import Dialog, { Field, inputClass } from "./Dialog";
 
 export default function EditLiabilityModal({ accountId, onClose }) {
   const { accounts, updateAccount, accountTypes } = useExpenseContext();
@@ -14,6 +15,7 @@ export default function EditLiabilityModal({ accountId, onClose }) {
   const [statementCutoffDay, setStatementCutoffDay] = useState("");
   const [dueDateOffsetDays, setDueDateOffsetDays] = useState("");
   const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (account) {
@@ -25,9 +27,7 @@ export default function EditLiabilityModal({ accountId, onClose }) {
     }
   }, [account]);
 
-  const { requestAddAccountType, inlineAddAccountTypeModal } = useInlineAddAccountType(
-    (newTypeId) => setTypeId(newTypeId)
-  );
+  const { requestAddAccountType, inlineAddAccountTypeModal } = useInlineAddAccountType((newTypeId) => setTypeId(newTypeId));
 
   const handleSave = async () => {
     if (!name.trim()) return setError("Please enter a name.");
@@ -38,6 +38,7 @@ export default function EditLiabilityModal({ accountId, onClose }) {
     if (dueDateOffsetDays === "" || isNaN(Number(dueDateOffsetDays)) || Number(dueDateOffsetDays) < 0)
       return setError("Days until due must be a non-negative number.");
 
+    setSaving(true);
     try {
       await updateAccount(accountId, {
         name: name.trim(),
@@ -50,6 +51,7 @@ export default function EditLiabilityModal({ accountId, onClose }) {
     } catch (err) {
       console.error("Failed to update liability:", err);
       setError("Failed to save changes.");
+      setSaving(false);
     }
   };
 
@@ -57,105 +59,65 @@ export default function EditLiabilityModal({ accountId, onClose }) {
 
   return (
     <>
-      <div className="fixed inset-0 flex items-center justify-center bg-ink/40 z-50">
-        <div className="bg-surface w-[90%] max-w-md rounded-xl shadow-lg p-6 relative">
-          <button
-            onClick={onClose}
-            className="absolute top-3 right-3 text-ink-muted hover:text-ink"
-          >
-            <X size={18} />
-          </button>
+      <Dialog title="Edit Liability" icon={CreditCard} onClose={onClose} onSubmit={handleSave} busy={saving} error={error}>
+        <div className="flex flex-col gap-4">
+          <Field label="Name" htmlFor="edit-liability-name">
+            <input id="edit-liability-name" type="text" value={name} onChange={(e) => setName(e.target.value)} className={inputClass} />
+          </Field>
 
-          <div className="flex items-center gap-2 mb-4">
-            <CreditCard size={18} className="text-alert" />
-            <h2 className="font-display text-xl text-ink">Edit Liability</h2>
-          </div>
+          <Field label="Type" htmlFor="edit-liability-type">
+            <AccountTypeSelectCell
+              id="edit-liability-type"
+              value={typeId}
+              onChange={setTypeId}
+              onRequestAdd={requestAddAccountType}
+              accountTypes={accountTypes}
+            />
+          </Field>
 
-          <div className="flex flex-col gap-4">
-            <div>
-              <label className="block text-sm font-medium text-ink-muted mb-1">Name</label>
+          <Field label="Credit Limit (optional)" htmlFor="edit-liability-limit">
+            <input
+              id="edit-liability-limit"
+              type="text"
+              inputMode="decimal"
+              value={creditLimit}
+              onChange={(e) => setCreditLimit(e.target.value)}
+              className={`money ${inputClass}`}
+            />
+          </Field>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Field
+              label="Statement Cutoff Day"
+              htmlFor="edit-liability-cutoff"
+              hint="Used to suggest the date when you log a statement close."
+            >
               <input
+                id="edit-liability-cutoff"
                 type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="w-full border border-border rounded-md px-3 py-2 text-ink bg-surface focus:ring-2 focus:ring-ledger focus:outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-ink-muted mb-1">Type</label>
-              <AccountTypeSelectCell
-                value={typeId}
-                onChange={setTypeId}
-                onRequestAdd={requestAddAccountType}
-                accountTypes={accountTypes}
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-ink-muted mb-1">
-                Credit Limit (optional)
-              </label>
-              <input
-                type="text"
-                value={creditLimit}
-                onChange={(e) => setCreditLimit(e.target.value)}
-                className="money w-full border border-border rounded-md px-3 py-2 text-ink bg-surface focus:ring-2 focus:ring-ledger focus:outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-ink-muted mb-1">
-                Statement Cutoff Day
-              </label>
-              <input
-                type="text"
+                inputMode="numeric"
                 value={statementCutoffDay}
                 onChange={(e) => setStatementCutoffDay(e.target.value)}
-                className="w-full border border-border rounded-md px-3 py-2 text-ink bg-surface focus:ring-2 focus:ring-ledger focus:outline-none"
+                className={inputClass}
               />
-              <p className="text-xs text-ink-muted mt-1">
-                Just a suggestion used to prefill the date when you log a statement close - not
-                the authoritative cutoff itself.
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-ink-muted mb-1">
-                Days Until Due (after statement closes)
-              </label>
+            </Field>
+            <Field label="Days Until Due (after close)" htmlFor="edit-liability-due">
               <input
+                id="edit-liability-due"
                 type="text"
+                inputMode="numeric"
                 value={dueDateOffsetDays}
                 onChange={(e) => setDueDateOffsetDays(e.target.value)}
-                className="w-full border border-border rounded-md px-3 py-2 text-ink bg-surface focus:ring-2 focus:ring-ledger focus:outline-none"
+                className={inputClass}
               />
-            </div>
-
-            <p className="text-xs text-ink-muted">
-              To change the amount owed, use Reconcile or Transfer from the card's page - not this
-              form.
-            </p>
-
-            {error && <p className="text-alert text-sm">{error}</p>}
-
-            <div className="flex justify-end gap-3 mt-2">
-              <button
-                onClick={onClose}
-                className="border border-border text-ink-muted px-4 py-2 rounded-lg hover:bg-surface-sunken transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSave}
-                className="bg-ledger text-white px-4 py-2 rounded-lg hover:bg-ledger-dark transition-colors"
-              >
-                Save
-              </button>
-            </div>
+            </Field>
           </div>
+
+          <p className="text-xs text-ink-muted">
+            To change the amount owed, use Reconcile or Transfer from the card&apos;s page - not this form.
+          </p>
         </div>
-      </div>
+      </Dialog>
 
       {inlineAddAccountTypeModal}
     </>

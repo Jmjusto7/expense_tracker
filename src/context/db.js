@@ -194,3 +194,10 @@ export function defineSchema(target, { upToVersion = Infinity } = {}) {
 }
 
 export const db = defineSchema(new Dexie("ExpensesDB"));
+
+// A newer app version (e.g. another tab after an update) is upgrading the
+// schema: step aside so it isn't blocked, then reload into the new code.
+db.on("versionchange", () => {
+  db.close();
+  window.location.reload();
+});

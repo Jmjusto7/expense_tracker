@@ -26,7 +26,7 @@ export default defineConfig([
       'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
       'react-refresh/only-export-components': [
         'error',
-        { allowConstantExport: true, allowExportNames: ['useExpenseContext', 'useFilter'] },
+        { allowConstantExport: true, allowExportNames: ['useExpenseContext', 'useFilter', 'useSync'] },
       ],
     },
   },

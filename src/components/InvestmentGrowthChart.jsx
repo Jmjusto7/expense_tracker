@@ -1,6 +1,7 @@
 // src/components/InvestmentGrowthChart.jsx
-import { ResponsiveContainer, ComposedChart, Area, Line, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
+import { ResponsiveContainer, ComposedChart, Area, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from "recharts";
 import { formatMonthYear } from "../utils/dateHelpers";
+import { compactNumber, Y_AXIS_WIDTH } from "../utils/chartFormat";
 
 // Cost basis (what you've put in, cumulative - only grows as Convert
 // entries accumulate) vs current value (units x price, moves with the
@@ -26,15 +27,18 @@ export default function InvestmentGrowthChart({ data, unitLabel }) {
           <XAxis
             dataKey="date"
             tickFormatter={formatMonthYear}
+            interval="preserveStartEnd"
+            minTickGap={12}
             stroke="#6b7570"
             tick={{ fontSize: 11 }}
           />
-          <YAxis stroke="#6b7570" tick={{ fontSize: 12 }} />
+          <YAxis stroke="#6b7570" tick={{ fontSize: 12 }} width={Y_AXIS_WIDTH} tickFormatter={compactNumber} />
           <Tooltip
             labelFormatter={(label) => formatMonthYear(label)}
-            formatter={(value, name) => [fmt(value), name === "costBasis" ? "Total Invested" : "Current Value"]}
+            formatter={(value, _name, item) => [fmt(value), item.dataKey === "costBasis" ? "Total Invested" : "Current Value"]}
             contentStyle={{ fontFamily: "var(--font-mono)", fontSize: 13 }}
           />
+          <Legend wrapperStyle={{ fontSize: 12 }} />
 
           {/* Total invested - a muted, filled step-like area, since it only
               ever grows (no "selling" in this app yet) - reads as the floor. */}

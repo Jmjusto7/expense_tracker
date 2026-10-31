@@ -316,7 +316,7 @@ export default function AccountDetailPage() {
         <div className="text-xs text-ink-muted uppercase tracking-wide mb-3">
           {isForeign ? "Units Over Time" : "Balance Over Time"}
         </div>
-        <AccountBalanceChart entries={balanceEntries} accountId={currentAccountId} />
+        <AccountBalanceChart entries={balanceEntries} accountId={currentAccountId} unit={account.unit} />
       </div>
 
       {isForeign && investmentHistory.length > 0 && (
@@ -337,58 +337,60 @@ export default function AccountDetailPage() {
           </p>
         )}
 
-        <table className="w-full text-left border-collapse text-sm">
-          <thead>
-            <tr className="bg-surface-sunken text-ink-muted text-xs uppercase tracking-wide">
-              <th className="border border-border px-3 py-2 font-medium">Date</th>
-              <th className="border border-border px-3 py-2 font-medium">Type</th>
-              {!isForeign && <th className="border border-border px-3 py-2 font-medium">Category</th>}
-              <th className="border border-border px-3 py-2 text-right font-medium">
-                {isForeign ? "Units / Price" : "Amount / Balance"}
-              </th>
-              <th className="border border-border px-3 py-2 font-medium">Comments</th>
-              <th className="border border-border px-3 py-2 w-[40px]"></th>
-            </tr>
-          </thead>
-
-          <tbody>
-            {entries.map((e) => (
-              <tr key={e.id}>
-                <td className="border border-border px-3 py-2 text-ink-muted">
-                  {formatDate(e.date)}
-                </td>
-                <td className="border border-border px-3 py-2">
-                  <span className={`text-xs px-2 py-0.5 rounded-full border ${typeBadgeClass(e.type)}`}>
-                    {typeLabel(e.type)}
-                  </span>
-                </td>
-                {!isForeign && (
-                  <td className="border border-border px-3 py-2 text-ink">{e.category || "—"}</td>
-                )}
-                <td className="money border border-border px-3 py-2 text-right font-semibold text-ink">
-                  {formatEntryValue(e)}
-                </td>
-                <td className="border border-border px-3 py-2 text-ink-muted">
-                  {entrySupplementalNote(e) && (
-                    <div className="text-xs text-ink-muted/80">{entrySupplementalNote(e)}</div>
-                  )}
-                  {e.comments}
-                </td>
-                <td className="border border-border px-2 py-2 text-center">
-                  <ConfirmButton
-                    onConfirm={() => handleDeleteEntry(e.id)}
-                    className="text-ink-muted hover:text-alert p-1"
-                    confirmClassName="text-alert text-xs font-medium px-1"
-                    confirmLabel="Sure?"
-                    title={e.type === "transfer" ? "Delete this transfer? Removes both sides." : "Delete this entry"}
-                  >
-                    <Trash2 size={14} />
-                  </ConfirmButton>
-                </td>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[560px] text-left border-collapse text-sm">
+            <thead>
+              <tr className="bg-surface-sunken text-ink-muted text-xs uppercase tracking-wide">
+                <th className="border border-border px-3 py-2 font-medium">Date</th>
+                <th className="border border-border px-3 py-2 font-medium">Type</th>
+                {!isForeign && <th className="border border-border px-3 py-2 font-medium">Category</th>}
+                <th className="border border-border px-3 py-2 text-right font-medium">
+                  {isForeign ? "Units / Price" : "Amount / Balance"}
+                </th>
+                <th className="border border-border px-3 py-2 font-medium">Comments</th>
+                <th className="border border-border px-3 py-2 w-[40px]"></th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+
+            <tbody>
+              {entries.map((e) => (
+                <tr key={e.id}>
+                  <td className="border border-border px-3 py-2 text-ink-muted">
+                    {formatDate(e.date)}
+                  </td>
+                  <td className="border border-border px-3 py-2">
+                    <span className={`text-xs px-2 py-0.5 rounded-full border ${typeBadgeClass(e.type)}`}>
+                      {typeLabel(e.type)}
+                    </span>
+                  </td>
+                  {!isForeign && (
+                    <td className="border border-border px-3 py-2 text-ink">{e.category || "—"}</td>
+                  )}
+                  <td className="money border border-border px-3 py-2 text-right font-semibold text-ink">
+                    {formatEntryValue(e)}
+                  </td>
+                  <td className="border border-border px-3 py-2 text-ink-muted">
+                    {entrySupplementalNote(e) && (
+                      <div className="text-xs text-ink-muted/80">{entrySupplementalNote(e)}</div>
+                    )}
+                    {e.comments}
+                  </td>
+                  <td className="border border-border px-2 py-2 text-center">
+                    <ConfirmButton
+                      onConfirm={() => handleDeleteEntry(e.id)}
+                      className="text-ink-muted hover:text-alert p-1"
+                      confirmClassName="text-alert text-xs font-medium px-1"
+                      confirmLabel="Sure?"
+                      title={e.type === "transfer" ? "Delete this transfer? Removes both sides." : "Delete this entry"}
+                    >
+                      <Trash2 size={14} />
+                    </ConfirmButton>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
 
         {entries.length === 0 && (
           <p className="text-ink-muted text-sm text-center py-6">No entries yet.</p>

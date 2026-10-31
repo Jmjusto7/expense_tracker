@@ -2,19 +2,25 @@ import { BrowserRouter } from "react-router-dom";
 import AppRoutes from "./routes";
 import { ExpenseProvider } from "./context/ExpenseContext";
 import { FilterProvider } from "./context/FilterContext";
+import { SyncProvider } from "./context/SyncContext";
 import Navbar from "./components/Navbar";
+import UpdatePrompt from "./components/UpdatePrompt";
 
 function App() {
   return (
     <ExpenseProvider>
-      <FilterProvider>
-        <BrowserRouter>
-          <Navbar />
-          <main>
-            <AppRoutes />
-          </main>
-        </BrowserRouter>
-      </FilterProvider>
+      <SyncProvider>
+        <FilterProvider>
+          <BrowserRouter>
+            <Navbar />
+            {/* Phones: leave room for the fixed bottom tab bar and floating Add button. */}
+            <main className="pb-[calc(6rem+env(safe-area-inset-bottom))] sm:pb-0">
+              <AppRoutes />
+            </main>
+            <UpdatePrompt />
+          </BrowserRouter>
+        </FilterProvider>
+      </SyncProvider>
     </ExpenseProvider>
   );
 }

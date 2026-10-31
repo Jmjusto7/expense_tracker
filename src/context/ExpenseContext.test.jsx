@@ -192,6 +192,37 @@ describe('saveDayTransactions', () => {
     })
 })
 
+describe('editTransaction', () => {
+    it('moves a transaction to another day and removes the emptied day', async () => {
+        const ids = await seedDay()
+        const txId = await db.transactions.add({ ...ids, category: 'Food', amount: 10, amountBreakdown: [10] })
+        const { result } = await renderExpenseContext()
+
+        await act(async () =>
+            result.current.editTransaction(txId, { date: new Date(2026, 2, 9), category: 'Food', amount: 10, amountBreakdown: [10] })
+        )
+
+        const moved = await db.transactions.get(txId)
+        const newDay = await db.days.get(moved.dayId)
+        expect(newDay.day).toBe(9)
+        expect(await db.days.get(ids.dayId)).toBeUndefined()
+    })
+
+    it('merges into an existing row instead of failing on the unique index', async () => {
+        const ids = await seedDay()
+        const foodId = await db.transactions.add({ ...ids, category: 'Food', amount: 10, amountBreakdown: [10] })
+        const taxiId = await db.transactions.add({ ...ids, category: 'Taxi', amount: 5, amountBreakdown: [5] })
+        const { result } = await renderExpenseContext()
+
+        await act(async () =>
+            result.current.editTransaction(taxiId, { date: new Date(2026, 2, 5), category: 'Food', amount: 5, amountBreakdown: [5] })
+        )
+
+        expect(await db.transactions.get(taxiId)).toBeUndefined()
+        expect(await db.transactions.get(foodId)).toMatchObject({ amount: 15, amountBreakdown: [10, 5] })
+    })
+})
+
 describe('addTransaction tag conflicts', () => {
     it('throws and writes nothing when travel tags differ', async () => {
         const ids = await seedDay()

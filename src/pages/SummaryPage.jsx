@@ -1,52 +1,166 @@
-import { useMemo } from "react";
-import { useNavigate } from "react-router-dom";
-import { Bell } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { Bell, ChevronRight, Plus, Wallet, Cloud } from "lucide-react";
 import { useExpenseContext } from "../context/ExpenseContext";
 import { ALL_MONTHS } from "../utils/dateHelpers";
-import { daysSinceLastReconciliation, getStatementInfo } from "../utils/balanceHelpers";
+import { getStatementInfo } from "../utils/balanceHelpers";
+import { getAttentionItems } from "../utils/attention";
 import { buildMonthlyIncomeExpense, findMonthRow } from "../utils/incomeExpenseHelpers";
 import NetWorthHeroCard from "../components/NetWorthHeroCard";
 import MonthSummaryCard from "../components/MonthSummaryCard";
 import IncomeExpenseChart from "../components/IncomeExpenseChart";
 import QuickStatsPanel from "../components/QuickStatsPanel";
+import AddTransactionModal from "../components/AddTransactionModal";
 
-// An account is treated as "needing attention" once its reconciliation is
-// more than 30 days stale (or it has none at all) - the one real thing
-// this dashboard has to notify about, rather than a decorative bell.
-const STALE_RECONCILIATION_DAYS = 30;
+const NEXT_DUE_SOON_DAYS = 7;
+
+function LoadingState() {
+  return (
+    <div role="status" aria-live="polite" className="max-w-6xl mx-auto px-4 sm:px-6 py-8 flex flex-col gap-4 animate-pulse">
+      <span className="sr-only">Loading your data…</span>
+      <div className="h-48 rounded-xl bg-surface-sunken" />
+      <div className="grid grid-cols-2 gap-4">
+        <div className="h-24 rounded-xl bg-surface-sunken" />
+        <div className="h-24 rounded-xl bg-surface-sunken" />
+      </div>
+      <div className="h-64 rounded-xl bg-surface-sunken" />
+    </div>
+  );
+}
+
+function Onboarding() {
+  const navigate = useNavigate();
+  const [adding, setAdding] = useState(false);
+  const steps = [
+    {
+      icon: Wallet,
+      title: "Add your accounts",
+      text: "Bank accounts, cash, cards - their balances make up your net worth.",
+      action: (
+        <Link to="/assets" className="text-sm font-medium text-ledger-dark hover:underline">
+          Go to Assets
+        </Link>
+      ),
+    },
+    {
+      icon: Plus,
+      title: "Log an expense",
+      text: "One entry per category per day; amounts can be several parts like 120, 45.",
+      action: (
+        <button type="button" onClick={() => setAdding(true)} className="text-sm font-medium text-ledger-dark hover:underline">
+          Add a transaction
+        </button>
+      ),
+    },
+    {
+      icon: Cloud,
+      title: "Back it up (optional)",
+      text: "Connect Google Drive in Settings to sync between your phone and computer.",
+      action: (
+        <Link to="/settings" className="text-sm font-medium text-ledger-dark hover:underline">
+          Open Settings
+        </Link>
+      ),
+    },
+  ];
+
+  return (
+    <div className="max-w-2xl mx-auto px-4 sm:px-6 py-10">
+      <h1 className="font-display text-3xl text-ink mb-2">Welcome</h1>
+      <p className="text-ink-muted mb-6">Everything stays on this device unless you turn on sync. Three steps to get going:</p>
+      <ol className="flex flex-col gap-3">
+        {steps.map(({ icon, title, text, action }, i) => {
+          const Icon = icon;
+          return (
+            <li key={title} className="bg-surface border border-border rounded-xl p-4 flex gap-3">
+              <div className="h-9 w-9 shrink-0 rounded-full bg-ledger-soft text-ledger-dark flex items-center justify-center">
+                <Icon size={18} aria-hidden="true" />
+              </div>
+              <div className="min-w-0">
+                <div className="font-medium text-ink">
+                  {i + 1}. {title}
+                </div>
+                <p className="text-sm text-ink-muted mb-1">{text}</p>
+                {action}
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+      {adding && (
+        <AddTransactionModal
+          onClose={() => setAdding(false)}
+          onSaved={({ year, monthName }) => navigate(`/expenses/${year}/${monthName}`)}
+        />
+      )}
+    </div>
+  );
+}
+
+function AttentionPanel({ items }) {
+  const [open, setOpen] = useState(false);
+  const alertCount = items.filter((i) => i.severity === "alert").length;
+
+  return (
+    <div className="flex flex-col items-end gap-2">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-controls="attention-list"
+        className="relative flex items-center gap-2 px-3 py-1.5 rounded-full text-sm text-ink-muted hover:text-ink hover:bg-surface-sunken transition-colors"
+      >
+        <Bell size={18} aria-hidden="true" />
+        {items.length === 0 ? "All caught up" : `${items.length} need${items.length === 1 ? "s" : ""} attention`}
+        {items.length > 0 && (
+          <span
+            className={`text-white text-[10px] leading-none rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1 ${alertCount ? "bg-alert" : "bg-warning"
+              }`}
+            aria-hidden="true"
+          >
+            {items.length}
+          </span>
+        )}
+      </button>
+      {open && items.length > 0 && (
+        <ul id="attention-list" className="w-full bg-surface border border-border rounded-xl divide-y divide-border">
+          {items.map((item) => (
+            <li key={item.key}>
+              <Link to={item.to} className="flex items-center gap-3 px-4 py-2.5 hover:bg-surface-sunken">
+                <span
+                  className={`h-2 w-2 rounded-full shrink-0 ${item.severity === "alert" ? "bg-alert" : "bg-warning"}`}
+                  aria-hidden="true"
+                />
+                <span className="flex-1 min-w-0">
+                  <span className="block text-sm font-medium text-ink break-words">{item.account.name}</span>
+                  <span className={`block text-xs ${item.severity === "alert" ? "text-alert" : "text-ink-muted"}`}>{item.text}</span>
+                </span>
+                <ChevronRight size={16} className="text-ink-muted shrink-0" aria-hidden="true" />
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 const SummaryPage = () => {
-  const navigate = useNavigate();
-  const { allTransactions, accounts, balanceEntries } = useExpenseContext();
+  const { isLoaded, allTransactions, accounts, balanceEntries } = useExpenseContext();
 
-  const today = new Date();
+  const today = useMemo(() => new Date(), []);
   const currentMonthName = ALL_MONTHS[today.getMonth()];
   const currentYear = today.getFullYear();
   const lastMonthDate = new Date(currentYear, today.getMonth() - 1, 1);
 
-  // -------------------------
-  // This month / last month transaction slices - the base data for the
-  // monthly cards and most of Quick Stats.
-  // -------------------------
   const thisMonthTx = useMemo(
     () => allTransactions.filter((t) => t.yearNumber === currentYear && t.monthName === currentMonthName),
     [allTransactions, currentYear, currentMonthName]
   );
 
-  // -------------------------
-  // Income/Expense monthly rollup - feeds both summary cards and the trend
-  // chart, computed once here rather than per-component.
-  // -------------------------
-  const monthlyRows = useMemo(
-    () => buildMonthlyIncomeExpense(allTransactions, balanceEntries),
-    [allTransactions, balanceEntries]
-  );
+  const monthlyRows = useMemo(() => buildMonthlyIncomeExpense(allTransactions, balanceEntries), [allTransactions, balanceEntries]);
 
-  // Trailing 12 calendar months (including the current one) - the chart
-  // otherwise plots every month of history ever logged, which grows
-  // increasingly illegible as more years accumulate. Mirrors the same
-  // 12-month window trailing12MonthGap already uses for the Gap Trend stat,
-  // just applied here to the chart's own data instead of a single sum.
+  // Trailing 12 calendar months, including this one.
   const last12MonthsRows = useMemo(() => {
     const endTs = new Date(currentYear, today.getMonth(), 1).getTime();
     const startTs = new Date(currentYear, today.getMonth() - 11, 1).getTime();
@@ -65,11 +179,7 @@ const SummaryPage = () => {
   const expenseChangeAmount = thisMonthExpense - (lastMonthRow?.expense ?? 0);
   const expenseChangePct = lastMonthRow?.expense ? (expenseChangeAmount / lastMonthRow.expense) * 100 : null;
 
-  // -------------------------
-  // Quick Stats
-  // -------------------------
-  const savingsRatePct =
-    thisMonthIncome > 0 ? ((thisMonthIncome - thisMonthExpense) / thisMonthIncome) * 100 : null;
+  const savingsRatePct = thisMonthIncome > 0 ? ((thisMonthIncome - thisMonthExpense) / thisMonthIncome) * 100 : null;
 
   const largestExpense = useMemo(() => {
     if (thisMonthTx.length === 0) return null;
@@ -92,48 +202,30 @@ const SummaryPage = () => {
     return { name, amount, pct: totalExpense ? (amount / totalExpense) * 100 : 0 };
   }, [thisMonthTx]);
 
-  // Projects this month's likely total from the daily average so far, then
-  // compares that projection to last month's actual pace - the one
-  // forward-looking figure on this dashboard, versus everything else here
-  // which reports what already happened. Positive pct = spending faster
-  // than last month; negative = slower.
+  // Projected month total from the daily average so far, vs last month's actual.
   const daysElapsedThisMonth = today.getDate();
   const daysInThisMonth = new Date(currentYear, today.getMonth() + 1, 0).getDate();
 
   const spendPace = useMemo(() => {
     if (daysElapsedThisMonth <= 0) return null;
     const projectedMonthTotal = (thisMonthExpense / daysElapsedThisMonth) * daysInThisMonth;
-    const paceVsLastMonthPct = lastMonthRow?.expense
-      ? ((projectedMonthTotal - lastMonthRow.expense) / lastMonthRow.expense) * 100
-      : null;
+    const paceVsLastMonthPct = lastMonthRow?.expense ? ((projectedMonthTotal - lastMonthRow.expense) / lastMonthRow.expense) * 100 : null;
     return { projectedMonthTotal, paceVsLastMonthPct };
   }, [thisMonthExpense, daysElapsedThisMonth, daysInThisMonth, lastMonthRow]);
 
-  // Sum of remainingDue (see getStatementInfo/getStatementPaymentStatus)
-  // across every liability whose most recent statement's due date falls
-  // in the current calendar month - one signed figure: positive = still
-  // owed somewhere this month, 0 = everything due this month is settled,
-  // negative = net overpaid/credit across what's due this month. A
-  // liability with no statement logged yet (no due date at all) doesn't
-  // contribute - there's nothing to be "due" without a real cutoff.
+  // Signed sum of what's still due on statements whose due date is this month.
   const liabilitiesDueThisMonth = useMemo(() => {
     return accounts
       .filter((a) => a.isLiability)
       .reduce((sum, a) => {
         const info = getStatementInfo(balanceEntries, a, today);
         if (!info.dueDate) return sum;
-        const isDueThisMonth =
-          info.dueDate.getFullYear() === currentYear && info.dueDate.getMonth() === today.getMonth();
+        const isDueThisMonth = info.dueDate.getFullYear() === currentYear && info.dueDate.getMonth() === today.getMonth();
         return isDueThisMonth ? sum + (info.remainingDue ?? 0) : sum;
       }, 0);
   }, [accounts, balanceEntries, currentYear, today]);
 
-  // The single soonest unpaid due date across ALL liabilities, regardless
-  // of calendar month - liabilitiesDueThisMonth above only sums what's due
-  // within the current month, so something due a few days into next month
-  // would otherwise never surface here until the month actually flips.
-  const NEXT_DUE_SOON_DAYS = 7;
-
+  // Soonest unpaid due date across all liabilities, any month.
   const nextPaymentDue = useMemo(() => {
     const candidates = accounts
       .filter((a) => a.isLiability)
@@ -147,83 +239,67 @@ const SummaryPage = () => {
     const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
     const dueMidnight = new Date(info.dueDate.getFullYear(), info.dueDate.getMonth(), info.dueDate.getDate());
     const daysUntilDue = Math.round((dueMidnight - todayMidnight) / (1000 * 60 * 60 * 24));
+    const status = daysUntilDue < 0 ? "overdue" : daysUntilDue <= NEXT_DUE_SOON_DAYS ? "dueSoon" : "upcoming";
 
-    const status =
-      daysUntilDue < 0 ? "overdue" : daysUntilDue <= NEXT_DUE_SOON_DAYS ? "dueSoon" : "upcoming";
-
-    return {
-      accountName: account.name,
-      amount: info.remainingDue,
-      dueDate: info.dueDate,
-      daysUntilDue,
-      status,
-    };
+    return { accountId: account.id, accountName: account.name, amount: info.remainingDue, dueDate: info.dueDate, daysUntilDue, status };
   }, [accounts, balanceEntries, today]);
 
-  // -------------------------
-  // Notification bell - accounts overdue for reconciliation, the one
-  // genuine thing this dashboard has to flag.
-  // -------------------------
-  const staleAccountCount = useMemo(() => {
-    return accounts.filter((a) => {
-      const days = daysSinceLastReconciliation(balanceEntries, a.id);
-      return days === null || days > STALE_RECONCILIATION_DAYS;
-    }).length;
-  }, [accounts, balanceEntries]);
+  const attentionItems = useMemo(() => getAttentionItems(accounts, balanceEntries, today), [accounts, balanceEntries, today]);
+
+  if (!isLoaded) return <LoadingState />;
+  if (accounts.length === 0 && allTransactions.length === 0) return <Onboarding />;
+
+  const cardLink = "block h-full rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ledger hover:shadow-sm";
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 flex flex-col gap-4">
-      {/* Notification bell only - no greeting text */}
-      <div className="shrink-0 flex items-center justify-end">
-        <button
-          onClick={() => navigate("/assets")}
-          className="relative p-2 rounded-full text-ink-muted hover:text-ink hover:bg-surface-sunken transition-colors"
-          title={
-            staleAccountCount > 0
-              ? `${staleAccountCount} account${staleAccountCount === 1 ? "" : "s"} need reconciling`
-              : "All accounts reconciled recently"
-          }
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8 flex flex-col gap-4">
+      <h1 className="sr-only">Home</h1>
+      <AttentionPanel items={attentionItems} />
+
+      <NetWorthHeroCard accounts={accounts} balanceEntries={balanceEntries} />
+
+      <div className="grid grid-cols-1 min-[420px]:grid-cols-2 gap-4">
+        <Link to="/assets#history" className={cardLink} aria-label="This month's income - see income history">
+          <MonthSummaryCard
+            label="This Month's Income"
+            value={thisMonthIncome}
+            changeAmount={incomeChangeAmount}
+            changePct={incomeChangePct}
+            accent="ledger"
+            compact
+          />
+        </Link>
+        <Link
+          to={`/expenses/${currentYear}/${currentMonthName}`}
+          className={cardLink}
+          aria-label={`This month's expenses - open ${currentMonthName} ${currentYear}`}
         >
-          <Bell size={20} />
-          {staleAccountCount > 0 && (
-            <span className="absolute top-0.5 right-0.5 bg-alert text-white text-[10px] leading-none rounded-full min-w-[16px] h-4 flex items-center justify-center px-1">
-              {staleAccountCount}
-            </span>
-          )}
-        </button>
+          <MonthSummaryCard
+            label="This Month's Expenses"
+            value={thisMonthExpense}
+            changeAmount={expenseChangeAmount}
+            changePct={expenseChangePct}
+            accent="alert"
+            compact
+          />
+        </Link>
       </div>
 
-      {/* NET WORTH HERO */}
-      <div className="h-[280px] shrink-0">
-        <NetWorthHeroCard accounts={accounts} balanceEntries={balanceEntries} />
-      </div>
-
-      {/* MONTHLY SUMMARY CARDS - smaller than the hero, side by side */}
-      <div className="grid grid-cols-2 gap-4">
-        <MonthSummaryCard
-          label="This Month's Income"
-          value={thisMonthIncome}
-          changeAmount={incomeChangeAmount}
-          changePct={incomeChangePct}
-          accent="ledger"
-          compact
-        />
-        <MonthSummaryCard
-          label="This Month's Expenses"
-          value={thisMonthExpense}
-          changeAmount={expenseChangeAmount}
-          changePct={expenseChangePct}
-          accent="alert"
-          compact
-        />
-      </div>
-
-      {/* BOTTOM: TREND CHART (reusing the Assets-tab chart) + QUICK STATS */}
       <div className="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-4">
-        <div className="h-[300px]">
+        <section className="bg-surface border border-border rounded-xl p-4 min-w-0">
+          <div className="flex items-baseline justify-between gap-2 mb-2">
+            <h2 className="text-sm font-semibold text-ink">Income vs Expenses</h2>
+            <span className="text-xs text-ink-muted">Last 12 months</span>
+          </div>
           <IncomeExpenseChart data={last12MonthsRows} />
-        </div>
-        <div className="h-[300px]">
+        </section>
+        <section className="min-w-0 flex flex-col">
+          <div className="flex items-baseline justify-between gap-2 mb-2 px-1">
+            <h2 className="text-sm font-semibold text-ink">Quick Stats</h2>
+            <span className="text-xs text-ink-muted">
+              {currentMonthName} {currentYear}
+            </span>
+          </div>
           <QuickStatsPanel
             savingsRatePct={savingsRatePct}
             largestExpense={largestExpense}
@@ -232,7 +308,7 @@ const SummaryPage = () => {
             liabilitiesDueThisMonth={liabilitiesDueThisMonth}
             nextPaymentDue={nextPaymentDue}
           />
-        </div>
+        </section>
       </div>
     </div>
   );

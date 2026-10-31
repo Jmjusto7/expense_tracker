@@ -1,9 +1,11 @@
 // Travel dropdown for a transaction row, with a "+ Add Travel" option that
 // hands control back to the parent (via onRequestAdd) rather than managing
 // the AddTravelModal itself - see useInlineAddTravel.
-export default function TravelSelectCell({ value, onChange, onRequestAdd, travels, disabled = false }) {
+export default function TravelSelectCell({ value, onChange, onRequestAdd, travels, disabled = false, id, "aria-label": ariaLabel }) {
   return (
     <select
+      id={id}
+      aria-label={ariaLabel}
       value={value}
       onChange={(e) => {
         const val = e.target.value;

@@ -18,15 +18,22 @@ const SettingsPage = () => {
     <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
       <h1 className="font-display text-2xl text-ink mb-6">Settings</h1>
 
-      <div className="flex gap-6">
-        {/* Sidebar */}
-        <div className="w-56 shrink-0">
-          <div className="bg-surface border border-border rounded-lg p-2 flex flex-col gap-1">
+      <div className="flex flex-col md:flex-row gap-4 md:gap-6">
+        <div className="md:w-56 md:shrink-0">
+          <div
+            role="tablist"
+            aria-label="Settings sections"
+            className="bg-surface border border-border rounded-lg p-1.5 md:p-2 flex md:flex-col gap-1 overflow-x-auto"
+          >
             {tabs.map((t) => (
               <button
                 key={t.id}
+                id={`settings-tab-${t.id}`}
+                role="tab"
+                aria-selected={tab === t.id}
+                aria-controls="settings-panel"
                 onClick={() => setTab(t.id)}
-                className={`text-left px-3 py-2 rounded-md text-sm font-medium transition-colors ${tab === t.id
+                className={`shrink-0 whitespace-nowrap text-left px-3 py-2 rounded-md text-sm font-medium transition-colors ${tab === t.id
                   ? "bg-ledger-soft text-ledger-dark"
                   : "text-ink-muted hover:bg-surface-sunken hover:text-ink"
                   }`}
@@ -37,8 +44,12 @@ const SettingsPage = () => {
           </div>
         </div>
 
-        {/* Content */}
-        <div className="flex-1 bg-surface border border-border rounded-lg p-6">
+        <div
+          id="settings-panel"
+          role="tabpanel"
+          aria-labelledby={`settings-tab-${tab}`}
+          className="flex-1 min-w-0 bg-surface border border-border rounded-lg p-4 sm:p-6"
+        >
           {tab === "bucketing" && <CategoryBucketing />}
           {tab === "accountTypes" && <AccountTypes />}
           {tab === "sync" && <SyncTab />}

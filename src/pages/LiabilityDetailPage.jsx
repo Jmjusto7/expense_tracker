@@ -275,22 +275,24 @@ export default function LiabilityDetailPage() {
                   No charges linked yet this cycle.
                 </p>
               ) : (
-                <table className="w-full text-left border-collapse text-sm">
-                  <tbody>
-                    {cycle.transactions.map((t) => (
-                      <tr key={t.id}>
-                        <td className="border-t border-border px-3 py-1.5 text-ink-muted text-xs whitespace-nowrap">
-                          {formatDate(t.resolvedDate)}
-                        </td>
-                        <td className="border-t border-border px-3 py-1.5 text-ink w-[30%]">{t.category}</td>
-                        <td className="border-t border-border px-3 py-1.5 text-ink-muted text-xs">{t.comments}</td>
-                        <td className="money border-t border-border px-3 py-1.5 text-right font-medium text-ink w-[110px]">
-                          {formatCurrency(t.amount)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[420px] text-left border-collapse text-sm">
+                    <tbody>
+                      {cycle.transactions.map((t) => (
+                        <tr key={t.id}>
+                          <td className="border-t border-border px-3 py-1.5 text-ink-muted text-xs whitespace-nowrap">
+                            {formatDate(t.resolvedDate)}
+                          </td>
+                          <td className="border-t border-border px-3 py-1.5 text-ink w-[30%]">{t.category}</td>
+                          <td className="border-t border-border px-3 py-1.5 text-ink-muted text-xs">{t.comments}</td>
+                          <td className="money border-t border-border px-3 py-1.5 text-right font-medium text-ink w-[110px]">
+                            {formatCurrency(t.amount)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </div>
           );
@@ -319,50 +321,52 @@ export default function LiabilityDetailPage() {
           <p className="text-alert text-sm bg-alert-soft rounded-md px-3 py-2 mb-3">{deleteError}</p>
         )}
 
-        <table className="w-full text-left border-collapse text-sm">
-          <thead>
-            <tr className="bg-surface-sunken text-ink-muted text-xs uppercase tracking-wide">
-              <th className="border border-border px-3 py-2 font-medium">Date</th>
-              <th className="border border-border px-3 py-2 font-medium">Type</th>
-              <th className="border border-border px-3 py-2 text-right font-medium">Amount / Balance</th>
-              <th className="border border-border px-3 py-2 font-medium">Comments</th>
-              <th className="border border-border px-3 py-2 w-[40px]"></th>
-            </tr>
-          </thead>
-
-          <tbody>
-            {entries.map((e) => (
-              <tr key={e.id}>
-                <td className="border border-border px-3 py-2 text-ink-muted">{formatDate(e.date)}</td>
-                <td className="border border-border px-3 py-2">
-                  <span className={`text-xs px-2 py-0.5 rounded-full border ${typeBadgeClass(e.type)}`}>
-                    {typeLabel(e.type)}
-                  </span>
-                </td>
-                <td className="money border border-border px-3 py-2 text-right font-semibold text-ink">
-                  {formatEntryValue(e)}
-                </td>
-                <td className="border border-border px-3 py-2 text-ink-muted">
-                  {entrySupplementalNote(e) && (
-                    <div className="text-xs text-ink-muted/80">{entrySupplementalNote(e)}</div>
-                  )}
-                  {e.comments}
-                </td>
-                <td className="border border-border px-2 py-2 text-center">
-                  <ConfirmButton
-                    onConfirm={() => handleDeleteEntry(e.id)}
-                    className="text-ink-muted hover:text-alert p-1"
-                    confirmClassName="text-alert text-xs font-medium px-1"
-                    confirmLabel="Sure?"
-                    title={e.type === "transfer" ? "Delete this transfer? Removes both sides." : "Delete this entry"}
-                  >
-                    <Trash2 size={14} />
-                  </ConfirmButton>
-                </td>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[560px] text-left border-collapse text-sm">
+            <thead>
+              <tr className="bg-surface-sunken text-ink-muted text-xs uppercase tracking-wide">
+                <th className="border border-border px-3 py-2 font-medium">Date</th>
+                <th className="border border-border px-3 py-2 font-medium">Type</th>
+                <th className="border border-border px-3 py-2 text-right font-medium">Amount / Balance</th>
+                <th className="border border-border px-3 py-2 font-medium">Comments</th>
+                <th className="border border-border px-3 py-2 w-[40px]"></th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+
+            <tbody>
+              {entries.map((e) => (
+                <tr key={e.id}>
+                  <td className="border border-border px-3 py-2 text-ink-muted">{formatDate(e.date)}</td>
+                  <td className="border border-border px-3 py-2">
+                    <span className={`text-xs px-2 py-0.5 rounded-full border ${typeBadgeClass(e.type)}`}>
+                      {typeLabel(e.type)}
+                    </span>
+                  </td>
+                  <td className="money border border-border px-3 py-2 text-right font-semibold text-ink">
+                    {formatEntryValue(e)}
+                  </td>
+                  <td className="border border-border px-3 py-2 text-ink-muted">
+                    {entrySupplementalNote(e) && (
+                      <div className="text-xs text-ink-muted/80">{entrySupplementalNote(e)}</div>
+                    )}
+                    {e.comments}
+                  </td>
+                  <td className="border border-border px-2 py-2 text-center">
+                    <ConfirmButton
+                      onConfirm={() => handleDeleteEntry(e.id)}
+                      className="text-ink-muted hover:text-alert p-1"
+                      confirmClassName="text-alert text-xs font-medium px-1"
+                      confirmLabel="Sure?"
+                      title={e.type === "transfer" ? "Delete this transfer? Removes both sides." : "Delete this entry"}
+                    >
+                      <Trash2 size={14} />
+                    </ConfirmButton>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
 
         {entries.length === 0 && (
           <p className="text-ink-muted text-sm text-center py-6">No entries yet.</p>

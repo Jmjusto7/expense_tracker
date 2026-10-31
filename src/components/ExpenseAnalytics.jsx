@@ -20,6 +20,17 @@ import MonthlySpendChart from "./MonthlySpendChart";
 import StatCard from "./StatCard";
 import BreakdownGrid from "./BreakdownGrid";
 
+// Date filtering is month-granular (see transactionMatchesDate), so ranges are first-of-month dates.
+const monthStart = (d, offset = 0) => new Date(d.getFullYear(), d.getMonth() + offset, 1);
+const DATE_PRESETS = [
+  { label: "This month", range: (now) => [monthStart(now), monthStart(now)] },
+  { label: "Last month", range: (now) => [monthStart(now, -1), monthStart(now, -1)] },
+  { label: "This year", range: (now) => [new Date(now.getFullYear(), 0, 1), monthStart(now)] },
+  { label: "Last 12 months", range: (now) => [monthStart(now, -11), monthStart(now)] },
+];
+const sameMonth = (a, b) =>
+  a instanceof Date && b instanceof Date && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth();
+
 // This is the bucket/category drill-down + stat cards + monthly trend that
 // used to be the entire Home page. It moved here once filter-*setting*
 // (as opposed to filter *removal*, which FilterBar elsewhere still does)
@@ -81,21 +92,23 @@ export default function ExpenseAnalytics() {
   const isLevel3TravelCategories = isInsideTravelDrill && useBuckets && travelDrillBucketId;
   const isCategoryLevel = !useBuckets || (selectedBucketIds.length > 0 && !isLevel2TravelBuckets);
 
+  // Pie slices can only show positive groups; percentages are of the slices shown.
+  const toSlices = (groups, describe) => {
+    const positive = [...groups.values()].filter((g) => g.total > 0);
+    const total = positive.reduce((s, g) => s + g.total, 0);
+    return positive.map((g) => ({
+      ...describe(g),
+      amount: g.total,
+      percent: total ? ((g.total / total) * 100).toFixed(1) : 0,
+    }));
+  };
+  const bucketSlice = (g) => ({ category: g.bucketLabel, bucketId: g.bucketId });
+  const categorySlice = (g) => ({ category: g.category });
+
   const chartData = useMemo(() => {
     if (isLevel2TravelBuckets) {
       if (travelScopedClassifiedTx.length === 0) return [];
-
-      const bucketGroups = groupByEffectiveBucket(travelScopedClassifiedTx);
-      const total = [...bucketGroups.values()].reduce((s, g) => s + g.total, 0);
-
-      return [...bucketGroups.values()]
-        .filter((g) => g.total > 0)
-        .map((g) => ({
-          category: g.bucketLabel,
-          amount: g.total,
-          bucketId: g.bucketId,
-          percent: total ? ((g.total / total) * 100).toFixed(1) : 0,
-        }));
+      return toSlices(groupByEffectiveBucket(travelScopedClassifiedTx), bucketSlice);
     }
 
     if (isLevel3TravelCategories) {
@@ -107,48 +120,19 @@ export default function ExpenseAnalytics() {
         : scopedToTravelBucket;
 
       if (finalScoped.length === 0) return [];
-
-      const categoryGroups = groupByCategory(finalScoped);
-      const total = [...categoryGroups.values()].reduce((s, g) => s + g.total, 0);
-
-      return [...categoryGroups.values()]
-        .filter((g) => g.total > 0)
-        .map((g) => ({
-          category: g.category,
-          amount: g.total,
-          percent: total ? ((g.total / total) * 100).toFixed(1) : 0,
-        }));
+      return toSlices(groupByCategory(finalScoped), categorySlice);
     }
 
     if (filteredTransactions.length === 0) return [];
 
     if (useBuckets && !isCategoryLevel) {
-      const bucketGroups = groupByEffectiveBucket(filteredTransactions);
-      const total = [...bucketGroups.values()].reduce((s, g) => s + g.total, 0);
-
-      return [...bucketGroups.values()]
-        .filter((g) => g.total > 0)
-        .map((g) => ({
-          category: g.bucketLabel,
-          amount: g.total,
-          bucketId: g.bucketId,
-          percent: total ? ((g.total / total) * 100).toFixed(1) : 0,
-        }));
+      return toSlices(groupByEffectiveBucket(filteredTransactions), bucketSlice);
     }
 
-    const categoryGroups = groupByCategory(filteredTransactions);
-    const total = [...categoryGroups.values()].reduce((s, g) => s + g.total, 0);
-
-    return [...categoryGroups.values()]
-      .filter((g) => g.total > 0)
-      .map((g) => ({
-        category: g.category,
-        amount: g.total,
-        percent: total ? ((g.total / total) * 100).toFixed(1) : 0,
-      }));
+    return toSlices(groupByCategory(filteredTransactions), categorySlice);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filteredTransactions, useBuckets, isCategoryLevel, isLevel2TravelBuckets, isLevel3TravelCategories, travelScopedClassifiedTx, travelDrillBucketId, selectedCategoryFilters]);
 
-  const totalExpenses = chartData.reduce((s, x) => s + x.amount, 0);
   const hasData = chartData.length > 0;
 
   const monthlyTotals = useMemo(() => {
@@ -178,6 +162,10 @@ export default function ExpenseAnalytics() {
       })
       .sort((a, b) => a.date - b.date);
   }, [filteredTransactions, isLevel2TravelBuckets, isLevel3TravelCategories, travelScopedClassifiedTx, travelDrillBucketId, selectedCategoryFilters]);
+
+  // Signed (refunds included), so it matches Home and the month totals; the pie shows positives only.
+  const totalExpenses = monthlyTotals.reduce((s, m) => s + m.total, 0);
+  const excludedFromPie = chartData.reduce((s, x) => s + x.amount, 0) - totalExpenses;
 
   const transactionCount = useMemo(() => {
     if (isLevel2TravelBuckets) return travelScopedClassifiedTx.length;
@@ -260,33 +248,74 @@ export default function ExpenseAnalytics() {
       {/* FILTER TOOLBAR */}
       <div className="bg-surface border border-border rounded-lg p-4 flex flex-col gap-3">
         <div className="flex flex-wrap gap-4 items-center">
-          <label className="group relative w-28 h-7 rounded-full select-none cursor-pointer flex border border-border shrink-0">
-            <input
-              type="checkbox"
-              className="peer appearance-none hidden"
-              checked={useBuckets}
-              onChange={() => {
-                setUseBuckets(!useBuckets);
-                setSelectedCategoryFilters([]);
-                setTravelDrillBucketId(null);
-              }}
-            />
-            <div className="absolute left-0 top-0 w-1/2 h-full bg-ledger rounded-full transition-all peer-checked:left-1/2"></div>
-            <span className="relative w-1/2 flex items-center justify-center text-xs font-medium text-white peer-checked:text-ink">
-              Detail
-            </span>
-            <span className="relative w-1/2 flex items-center justify-center text-xs font-medium text-ink peer-checked:text-white">
-              Bucket
-            </span>
-          </label>
+          <div role="group" aria-label="Group chart by" className="flex rounded-full border border-border p-0.5 shrink-0">
+            {[
+              [false, "Detail"],
+              [true, "Bucket"],
+            ].map(([value, label]) => (
+              <button
+                key={label}
+                type="button"
+                aria-pressed={useBuckets === value}
+                onClick={() => {
+                  if (useBuckets === value) return;
+                  setUseBuckets(value);
+                  setSelectedCategoryFilters([]);
+                  setTravelDrillBucketId(null);
+                }}
+                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${useBuckets === value ? "bg-ledger text-white" : "text-ink-muted hover:text-ink"
+                  }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
 
           <div>
-            <label className="block text-xs text-ink-muted mb-0.5">From</label>
-            <DatePicker value={fromDate} onChange={setFromDate} format="MM/yyyy" clearIcon={null} maxDetail="month" />
+            <span className="block text-xs text-ink-muted mb-0.5">From</span>
+            <DatePicker
+              value={fromDate}
+              onChange={setFromDate}
+              format="MM/yyyy"
+              clearIcon={null}
+              maxDetail="month"
+              monthAriaLabel="From month"
+              yearAriaLabel="From year"
+            />
           </div>
           <div>
-            <label className="block text-xs text-ink-muted mb-0.5">To</label>
-            <DatePicker value={toDate} onChange={setToDate} format="MM/yyyy" clearIcon={null} maxDetail="month" />
+            <span className="block text-xs text-ink-muted mb-0.5">To</span>
+            <DatePicker
+              value={toDate}
+              onChange={setToDate}
+              format="MM/yyyy"
+              clearIcon={null}
+              maxDetail="month"
+              monthAriaLabel="To month"
+              yearAriaLabel="To year"
+            />
+          </div>
+
+          <div role="group" aria-label="Date presets" className="flex flex-wrap gap-1.5">
+            {DATE_PRESETS.map((preset) => {
+              const [from, to] = preset.range(new Date());
+              const active = sameMonth(fromDate, from) && sameMonth(toDate, to);
+              return (
+                <button
+                  key={preset.label}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => {
+                    setFromDate(from);
+                    setToDate(to);
+                  }}
+                  className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${active ? "bg-ledger text-white border-ledger" : "border-border text-ink-muted hover:border-ledger hover:text-ledger-dark"
+                    }`}
+                >
+                  {preset.label}
+                </button>
+              );
+            })}
           </div>
 
           {hasActiveFilters && (
@@ -465,9 +494,14 @@ export default function ExpenseAnalytics() {
           </div>
 
           {/* PIE + BREAKDOWN */}
-          <div className="bg-surface border border-border rounded-lg p-6 flex flex-col md:flex-row gap-6">
-            <div className="flex-1 flex flex-col items-center">
-              <ExpensePieChart data={chartData} />
+          <div className="bg-surface border border-border rounded-lg p-4 sm:p-6 flex flex-col md:flex-row gap-6">
+            <div className="flex-1 flex flex-col items-center min-w-0">
+              <ExpensePieChart data={chartData} legend={false} />
+              {excludedFromPie > 0.005 && (
+                <p className="text-xs text-ink-muted mt-2">
+                  Refunds/credits of {formatCurrencyPrecise(excludedFromPie)} aren't shown in the chart but are included in Total Expenses.
+                </p>
+              )}
             </div>
 
             <div className="flex-[0.8] flex flex-col gap-4">

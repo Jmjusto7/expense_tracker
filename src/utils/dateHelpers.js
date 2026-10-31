@@ -8,6 +8,13 @@ export const ALL_MONTHS = [
 // Index (0-11) of a month name, e.g. "March" -> 2. Used for chronological sorting.
 export const monthIndexOf = (monthName) => ALL_MONTHS.indexOf(monthName);
 
+// "YYYY-MM-DD" in local time for <input type="date">; toISOString() would give the UTC day.
+export const toDateInputValue = (date = new Date()) => {
+  const d = date instanceof Date ? date : new Date(date);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
+
 // Safe display formatter for dates that may be a Date, an ISO string, or missing.
 export const formatDate = (date) => {
   if (!date) return "-";

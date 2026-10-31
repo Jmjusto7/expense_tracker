@@ -58,72 +58,84 @@ export default function ExpensesPage() {
   // which kind of expense a row is, not just the label text.
   const renderTable = (transactions, variant = "normal") => {
     const totalColor = variant === "travel" ? "text-travel-dark" : "text-ledger-dark";
+    const editButton = (t) => (
+      <button
+        type="button"
+        onClick={() => setEditingTransaction(t)}
+        className="text-ink-muted hover:text-ledger-dark p-1.5 rounded-md hover:bg-surface-sunken"
+        aria-label={`Edit ${t.category}`}
+        title="Edit this transaction"
+      >
+        <Pencil size={14} aria-hidden="true" />
+      </button>
+    );
+    const travelLink = (t) => {
+      const travel = findTravelById(travels, t.travelId);
+      return (
+        travel && (
+          <Link to={`/travels/${travel.id}`} className="inline-flex items-center gap-1 text-travel-dark font-medium hover:underline">
+            <Plane size={12} aria-hidden="true" />
+            {travel.title}
+          </Link>
+        )
+      );
+    };
 
     return (
-      <table className="w-full text-left border-collapse mb-4 text-sm">
-        <thead>
-          <tr className="bg-surface-sunken text-ink-muted text-xs uppercase tracking-wide">
-            <th className="border border-border px-3 py-2 w-[17%] font-medium">Category</th>
-            <th className="border border-border px-3 py-2 w-[32%] font-medium">Breakdown</th>
-            <th className="border border-border px-3 py-2 w-[105px] text-right font-medium">Total</th>
-            <th className="border border-border px-3 py-2 w-[14%] font-medium">Travel</th>
-            <th className="border border-border px-3 py-2 w-[24%] font-medium">Comments</th>
-            <th className="border border-border px-3 py-2 w-[40px]"></th>
-          </tr>
-        </thead>
-        <tbody>
-          {transactions.map((t) => {
-            const travel = findTravelById(travels, t.travelId);
+      <>
+        {/* Phones: one compact card per transaction */}
+        <ul className="md:hidden divide-y divide-border border border-border rounded-md mb-4 bg-surface">
+          {transactions.map((t) => (
+            <li key={t.id} className="flex items-start gap-2 px-3 py-2">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-sm font-medium text-ink break-words">{t.category}</span>
+                  <span className={`money text-sm font-semibold shrink-0 ${totalColor}`}>{formatCurrency(t.amount)}</span>
+                </div>
+                {t.amountBreakdown?.length > 1 && <div className="money text-xs text-ink-muted">{formatBreakdownDisplay(t)}</div>}
+                {t.comments && <div className="text-xs text-ink-muted break-words">{t.comments}</div>}
+                {t.travelId && <div className="text-xs mt-0.5">{travelLink(t)}</div>}
+              </div>
+              {editButton(t)}
+            </li>
+          ))}
+        </ul>
 
-            return (
+        <table className="hidden md:table w-full text-left border-collapse mb-4 text-sm">
+          <thead>
+            <tr className="bg-surface-sunken text-ink-muted text-xs uppercase tracking-wide">
+              <th className="border border-border px-3 py-2 w-[17%] font-medium">Category</th>
+              <th className="border border-border px-3 py-2 w-[32%] font-medium">Breakdown</th>
+              <th className="border border-border px-3 py-2 w-[105px] text-right font-medium">Total</th>
+              <th className="border border-border px-3 py-2 w-[14%] font-medium">Travel</th>
+              <th className="border border-border px-3 py-2 w-[24%] font-medium">Comments</th>
+              <th className="border border-border px-3 py-2 w-[40px]">
+                <span className="sr-only">Edit</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {transactions.map((t) => (
               <tr key={t.id}>
-                <td className="border border-border px-3 py-2 text-ink">
-                  {t.category}
-                </td>
-
-                <td className="money border border-border px-3 py-2 text-ink-muted text-xs">
-                  {formatBreakdownDisplay(t)}
-                </td>
-
+                <td className="border border-border px-3 py-2 text-ink">{t.category}</td>
+                <td className="money border border-border px-3 py-2 text-ink-muted text-xs">{formatBreakdownDisplay(t)}</td>
                 <td className={`money border border-border px-3 py-2 text-right font-semibold ${totalColor}`}>
                   {formatCurrency(t.amount)}
                 </td>
-
-                <td className="border border-border px-3 py-2 text-xs">
-                  {travel && (
-                    <Link
-                      to={`/travels/${travel.id}`}
-                      className="text-travel-dark font-medium hover:underline"
-                    >
-                      ✈ {travel.title}
-                    </Link>
-                  )}
-                </td>
-
-                <td className="border border-border px-3 py-2 text-ink-muted">
-                  {t.comments}
-                </td>
-
-                <td className="border border-border px-2 py-2 text-center">
-                  <button
-                    onClick={() => setEditingTransaction(t)}
-                    className="text-ink-muted hover:text-ledger-dark p-1"
-                    title="Edit this transaction"
-                  >
-                    <Pencil size={13} />
-                  </button>
-                </td>
+                <td className="border border-border px-3 py-2 text-xs">{travelLink(t)}</td>
+                <td className="border border-border px-3 py-2 text-ink-muted">{t.comments}</td>
+                <td className="border border-border px-2 py-2 text-center">{editButton(t)}</td>
               </tr>
-            );
-          })}
-        </tbody>
-      </table>
+            ))}
+          </tbody>
+        </table>
+      </>
     );
   };
 
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
-      <div className="flex justify-between items-center mb-2 gap-2">
+      <div className="flex flex-wrap justify-between items-center mb-2 gap-2">
         <div>
           <Breadcrumbs
             items={[
@@ -176,15 +188,16 @@ export default function ExpensesPage() {
         return (
           <div
             key={dayId}
-            className="group mb-6 bg-surface p-5 rounded-lg border border-border relative"
+            className="group mb-6 bg-surface p-3 sm:p-5 rounded-lg border border-border relative"
           >
             {/* Edit Button */}
             <button
               onClick={() => setEditDay(day)}
-              className="absolute top-4 right-4 opacity-70 group-hover:opacity-100 text-ink-muted hover:text-ledger-dark hover:bg-surface-sunken rounded-md p-1.5 transition-all"
+              className="absolute top-3 right-3 sm:top-4 sm:right-4 [@media(hover:hover)]:opacity-70 group-hover:opacity-100 text-ink-muted hover:text-ledger-dark hover:bg-surface-sunken rounded-md p-1.5 transition-all"
               title="Edit Day"
+              aria-label={`Edit day ${day}`}
             >
-              <Pencil size={16} />
+              <Pencil size={16} aria-hidden="true" />
             </button>
 
             <div className="flex justify-between mb-4 items-center pr-10">
@@ -225,7 +238,7 @@ export default function ExpensesPage() {
                 return (
                   <div
                     key={travelId}
-                    className="mb-5 bg-travel-soft border border-travel/30 rounded-lg p-4"
+                    className="mb-5 bg-travel-soft border border-travel/30 rounded-lg p-3 sm:p-4"
                   >
                     <div className="flex justify-between mb-3 items-center">
                       <div className="flex items-center gap-1.5">
@@ -265,7 +278,6 @@ export default function ExpensesPage() {
         <AddTransactionModal
           year={yearInt}
           month={month}
-          existingDays={grouped.map((g) => g.day)}
           onClose={() => setShowAddModal(false)}
         />
       )}

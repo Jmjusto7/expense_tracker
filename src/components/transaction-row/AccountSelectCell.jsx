@@ -10,13 +10,15 @@
 // same reasoning as Transfer's same-unit-only rule. Filtering happens
 // here rather than in every caller, since "which accounts are eligible" is
 // this selector's own business rule, not the modals'.
-export default function AccountSelectCell({ value, onChange, accounts, disabled = false }) {
+export default function AccountSelectCell({ value, onChange, accounts, disabled = false, id, "aria-label": ariaLabel }) {
   const eligible = accounts?.filter((a) => a.unit == null) ?? [];
   const eligibleAssets = eligible.filter((a) => !a.isLiability);
   const eligibleLiabilities = eligible.filter((a) => a.isLiability);
 
   return (
     <select
+      id={id}
+      aria-label={ariaLabel}
       value={value ?? ""}
       onChange={(e) => {
         const val = e.target.value;

@@ -1,6 +1,9 @@
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from "recharts";
 import { formatMonthYear } from "../utils/dateHelpers";
 import { formatCurrency } from "../utils/formatCurrency";
+import { compactCurrency, Y_AXIS_WIDTH } from "../utils/chartFormat";
+
+const SERIES_LABELS = { income: "Income", expense: "Expense", net: "Net" };
 
 export default function IncomeExpenseChart({ data }) {
   return (
@@ -11,16 +14,15 @@ export default function IncomeExpenseChart({ data }) {
           <XAxis
             dataKey="date"
             tickFormatter={formatMonthYear}
+            interval="preserveStartEnd"
+            minTickGap={12}
             stroke="#6b7570"
             tick={{ fontSize: 12 }}
           />
-          <YAxis stroke="#6b7570" tick={{ fontSize: 12 }} />
+          <YAxis stroke="#6b7570" tick={{ fontSize: 12 }} width={Y_AXIS_WIDTH} tickFormatter={compactCurrency} />
           <Tooltip
             labelFormatter={(label) => formatMonthYear(label)}
-            formatter={(value, name) => [
-              formatCurrency(value),
-              name === "income" ? "Income" : name === "expense" ? "Expense" : "Net",
-            ]}
+            formatter={(value, _name, item) => [formatCurrency(value), SERIES_LABELS[item.dataKey]]}
             contentStyle={{ fontFamily: "var(--font-mono)", fontSize: 13 }}
           />
           <Legend wrapperStyle={{ fontSize: 12 }} />

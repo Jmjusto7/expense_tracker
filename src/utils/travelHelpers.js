@@ -36,3 +36,37 @@ export const filterTransactionsByTravel = (transactions, travelId) => {
 
 export const sumAmounts = (transactions) =>
   transactions.reduce((sum, t) => sum + Number(t.amount || 0), 0);
+
+const dayTs = (d) => {
+  const date = new Date(d);
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+};
+
+// Ongoing/upcoming trips (soonest first) are pinned; past trips are grouped
+// by the year they started, newest year and newest trip first.
+export function groupTravelsByYear(travels, today = new Date()) {
+  const todayTs = dayTs(today);
+  const start = (t) => new Date(t.startDate).getTime() || 0;
+  const isCurrent = (t) => t.endDate && dayTs(t.endDate) >= todayTs;
+
+  const pinned = travels.filter(isCurrent).sort((a, b) => start(a) - start(b));
+  const byYear = new Map();
+  for (const travel of travels.filter((t) => !isCurrent(t)).sort((a, b) => start(b) - start(a))) {
+    const year = travel.startDate ? new Date(travel.startDate).getFullYear() : "Undated";
+    if (!byYear.has(year)) byYear.set(year, []);
+    byYear.get(year).push(travel);
+  }
+  return { pinned, years: [...byYear.entries()].map(([year, items]) => ({ year, travels: items })) };
+}
+
+// The trip an expense on `date` most likely belongs to: one whose dates
+// contain it (the shortest trip wins when trips overlap).
+export function findTravelForDate(travels, date) {
+  if (!date) return null;
+  const ts = dayTs(date);
+  const matches = travels.filter(
+    (t) => t.startDate && t.endDate && dayTs(t.startDate) <= ts && ts <= dayTs(t.endDate)
+  );
+  matches.sort((a, b) => dayTs(a.endDate) - dayTs(a.startDate) - (dayTs(b.endDate) - dayTs(b.startDate)));
+  return matches[0] ?? null;
+}

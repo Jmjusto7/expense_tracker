@@ -1,7 +1,10 @@
+import { colorForKey } from "../utils/chartFormat";
+
 // A grid of clickable amount/percent cards, used for drill-down analytics
 // (ExpenseAnalytics's bucket/category filter on the Expenses tab,
 // TravelDetailPage's bucket/category drill-down). Each item is
-// {key, label, amount, percent, disabled?}.
+// {key, label, amount, percent, disabled?}. The swatch matches the item's
+// pie slice colour, so the grid doubles as the chart legend.
 // accent picks "ledger" or "travel" styling to match the page it's on.
 export default function BreakdownGrid({ items, activeKeys = [], onItemClick, accent = "ledger" }) {
   const isActive = (item) => activeKeys.includes(item.key);
@@ -14,7 +17,7 @@ export default function BreakdownGrid({ items, activeKeys = [], onItemClick, acc
   const idleAmountColor = accent === "travel" ? "text-travel-dark" : "text-ledger-dark";
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 overflow-y-auto max-h-[420px]">
+    <div className="grid grid-cols-1 min-[420px]:grid-cols-2 gap-3 md:overflow-y-auto md:max-h-[420px]">
       {items.map((item) => {
         const active = isActive(item);
         const clickable = !item.disabled && onItemClick;
@@ -22,14 +25,21 @@ export default function BreakdownGrid({ items, activeKeys = [], onItemClick, acc
         return (
           <button
             key={item.key}
+            type="button"
             onClick={() => clickable && onItemClick(item)}
             disabled={!clickable}
-            className={`text-left rounded-lg p-3 border transition-colors flex flex-col ${
-              active ? activeBg : idleBg
-            } ${!clickable ? "cursor-default opacity-70" : ""}`}
+            aria-pressed={clickable ? active : undefined}
+            title={item.label}
+            className={`text-left rounded-lg p-3 border transition-colors flex flex-col min-w-0 ${active ? activeBg : idleBg
+              } ${!clickable ? "cursor-default opacity-70" : ""}`}
           >
-            <span className={`font-semibold text-sm ${active ? "text-white" : "text-ink"}`}>
-              {item.label}
+            <span className={`flex items-start gap-1.5 font-semibold text-sm break-words ${active ? "text-white" : "text-ink"}`}>
+              <span
+                className="mt-1 h-2.5 w-2.5 rounded-sm shrink-0 ring-1 ring-white/60"
+                style={{ backgroundColor: colorForKey(item.label) }}
+                aria-hidden="true"
+              />
+              <span className="min-w-0">{item.label}</span>
             </span>
             <span className={`money text-lg font-bold ${active ? "text-white" : idleAmountColor}`}>
               {item.amountDisplay}

@@ -10,6 +10,9 @@ export default function CategoryAutocompleteInput({
   disabled = false,
   inputRef,
   onKeyDown,
+  id,
+  placeholder = "Category",
+  "aria-label": ariaLabel,
 }) {
   const suggestion = getCategorySuggestion(categories, value);
   const ghostText = getGhostText(categories, value);
@@ -29,7 +32,9 @@ export default function CategoryAutocompleteInput({
           onKeyDown?.(e);
         }}
         className="w-full border border-border rounded-md px-2 py-1.5 text-sm bg-transparent relative text-ink focus:ring-2 focus:ring-ledger focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
-        placeholder="Category"
+        placeholder={placeholder}
+        aria-label={ariaLabel}
+        id={id}
         disabled={disabled}
         ref={inputRef}
       />

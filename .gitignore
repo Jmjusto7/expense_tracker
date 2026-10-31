@@ -11,6 +11,11 @@ node_modules
 dist
 dist-ssr
 *.local
+*.zip
+
+# Windows download markers
+*:Zone.Identifier
+*:Avecto.Zone.Identifier
 
 # Editor directories and files
 .vscode/*

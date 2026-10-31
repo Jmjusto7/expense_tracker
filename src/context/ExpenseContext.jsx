@@ -10,6 +10,7 @@ import { getAccessToken, clearAccessToken, revokeAccess } from "../sync/googleAu
 import * as drive from "../sync/driveClient";
 import { buildSnapshot, parseSnapshot, hashTables, hashRecord } from "../sync/snapshot";
 import { mergeSnapshots, applyRecordResolutions } from "../sync/mergeSnapshots";
+import { SyncRetryError } from "../sync/errors";
 import { isOldestReconciliation, getCurrentBalance, getCurrentValuePhp } from "../utils/balanceHelpers";
 import { ALL_MONTHS, formatDate } from "../utils/dateHelpers";
 import { findTagConflict, tagConflictMessage, mergeTransactionRows } from "../utils/transactionMerge";
@@ -53,6 +54,9 @@ export function ExpenseProvider({ children }) {
   const [accountTypes, setAccountTypes] = useState([]);
   const [isLoaded, setIsLoaded] = useState(false);
   const [syncStatus, setSyncStatus] = useState(null);
+  // Bumped whenever data is reloaded after a change; auto-sync debounces on it.
+  const [dataVersion, setDataVersion] = useState(0);
+  const bumpDataVersion = () => setDataVersion((v) => v + 1);
 
   // ---------------------------
   // Load full hierarchy from DB
@@ -98,6 +102,7 @@ export function ExpenseProvider({ children }) {
 
     setYears(structured);
     setTravels(allTravels);
+    bumpDataVersion();
   };
 
   // ---------------------------
@@ -115,6 +120,7 @@ export function ExpenseProvider({ children }) {
     setAccounts(allAccounts);
     setBalanceEntries(allBalanceEntries);
     setAccountTypes(allAccountTypes);
+    bumpDataVersion();
   };
 
   useEffect(() => {
@@ -365,6 +371,38 @@ export function ExpenseProvider({ children }) {
   });
 
   const removeTransaction = atomic("removeTransaction", (transactionId) => deleteTransactionRow(transactionId));
+
+  // Edits one transaction, optionally moving it to `date`; lands on an existing
+  // same-day/category row by merging into it, like the day editor does.
+  const editTransaction = atomic("editTransaction", async (transactionId, { date, ...fields }) => {
+    const current = await db.transactions.get(transactionId);
+    if (!current) throw new Error("This transaction no longer exists.");
+
+    const d = new Date(date);
+    const yearId = await ensureYear(d.getFullYear());
+    const monthId = await ensureMonth(yearId, ALL_MONTHS[d.getMonth()]);
+    const dayId = await ensureDay(yearId, monthId, d.getDate());
+    const normalized = {
+      ...fields,
+      travelId: normalizeTravelId(fields.travelId),
+      accountId: fields.accountId ?? null,
+    };
+
+    const target = await findDayCategoryRow(yearId, monthId, dayId, normalized.category);
+    let resultId = transactionId;
+    if (target && target.id !== transactionId) {
+      resultId = await mergeIntoExisting(target, { ...current, ...normalized });
+      await db.transactions.delete(transactionId);
+    } else {
+      await db.transactions.update(transactionId, { ...normalized, yearId, monthId, dayId });
+    }
+    await syncShadowExpenseEntry(transactionId);
+
+    if (current.dayId !== dayId && (await db.transactions.where({ dayId: current.dayId }).count()) === 0) {
+      await db.days.delete(current.dayId);
+    }
+    return resultId;
+  });
 
   // Saves one day's Add/Edit modal session in a single transaction: deletes,
   // updates to existing rows (`id` set), and new rows (merged per category).
@@ -1252,9 +1290,12 @@ export function ExpenseProvider({ children }) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `expenses_export_${new Date().toISOString()}.json`;
+    a.download = `expenses_export_${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    a.remove();
+    // Some mobile browsers start the download asynchronously; revoking at once can cancel it.
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   });
 
   // -------------------------
@@ -1345,6 +1386,7 @@ export function ExpenseProvider({ children }) {
         fileId: file?.id ?? null,
         remoteVersion: file?.version ?? null,
         localHash: hashRecord(hashTables(local)),
+        remoteHash: file ? hashRecord(hashTables(remote)) : null,
         merge: mergeSnapshots({ base, local, remote }),
       };
     });
@@ -1355,40 +1397,57 @@ export function ExpenseProvider({ children }) {
     return planImport(sides.localSide, sides.remoteSide);
   };
 
+  // Writes locally only if the merged result differs from this device, and
+  // uploads only if it differs from Drive, so a no-op sync touches nothing.
   const commitSync = withErrorHandling("commitSync", async (prepared, recordResolutions = {}, planResolutions = {}) => {
     const accessToken = await getAccessToken();
     const plan = planSync(prepared, recordResolutions);
     const { tables } = applyImportResolutions(plan, planResolutions);
-    const withShadows = { ...tables, balanceEntries: [...tables.balanceEntries, ...buildShadowEntries(tables)] };
+    const finalHashes = hashTables(tables);
+    const finalHash = hashRecord(finalHashes);
 
-    await db.transaction("rw", db.tables, async () => {
-      if (hashRecord(hashTables(await readAllTables())) !== prepared.localHash) {
-        throw new Error("Data on this device changed during sync. Please sync again.");
-      }
-      for (const name of IMPORT_TABLES) {
-        await db[name].clear();
-        await db[name].bulkPut(withShadows[name]);
-      }
-    });
-    await Promise.all([reloadHierarchy(), reloadAssets()]);
+    if (finalHash !== prepared.localHash) {
+      const withShadows = { ...tables, balanceEntries: [...tables.balanceEntries, ...buildShadowEntries(tables)] };
+      await db.transaction("rw", db.tables, async () => {
+        if (hashRecord(hashTables(await readAllTables())) !== prepared.localHash) {
+          throw new SyncRetryError("Data on this device changed during sync. Please sync again.");
+        }
+        for (const name of IMPORT_TABLES) {
+          await db[name].clear();
+          await db[name].bulkPut(withShadows[name]);
+        }
+      });
+      await Promise.all([reloadHierarchy(), reloadAssets()]);
+    }
 
     await forgetTokenOnAuthError(async () => {
-      if (prepared.fileId && (await drive.getFileVersion(accessToken, prepared.fileId)) !== prepared.remoteVersion) {
-        throw new Error("Google Drive was updated from another device during this sync. Please sync again.");
+      let fileId = prepared.fileId;
+      if (finalHash !== prepared.remoteHash) {
+        if (fileId && (await drive.getFileVersion(accessToken, fileId)) !== prepared.remoteVersion) {
+          throw new SyncRetryError("Google Drive was updated from another device during this sync. Please sync again.");
+        }
+        const content = JSON.stringify(buildSnapshot(tables));
+        const saved = fileId
+          ? await drive.updateSyncFile(accessToken, fileId, content)
+          : await drive.createSyncFile(accessToken, content);
+        fileId = saved.id;
       }
-      const snapshot = buildSnapshot(tables);
-      const content = JSON.stringify(snapshot);
-      const saved = prepared.fileId
-        ? await drive.updateSyncFile(accessToken, prepared.fileId, content)
-        : await drive.createSyncFile(accessToken, content);
 
       const lastSyncedAt = new Date();
-      await db.syncState.put({ key: SYNC_STATE_KEY, fileId: saved.id, base: hashTables(snapshot.tables), lastSyncedAt });
+      await db.syncState.put({ key: SYNC_STATE_KEY, fileId, base: finalHashes, lastSyncedAt });
       setSyncStatus({ lastSyncedAt });
     });
 
     return { summary: plan.summary };
   });
+
+  // True when this device has changes the Drive copy hasn't seen yet.
+  const hasPendingChanges = async () => {
+    const [state, local] = await Promise.all([db.syncState.get(SYNC_STATE_KEY), readAllTables()]);
+    const localHashes = hashTables(local);
+    if (!state?.base) return Object.values(localHashes).some((rows) => Object.keys(rows).length > 0);
+    return hashRecord(localHashes) !== hashRecord(state.base);
+  };
 
   // Keeps the sync base so deletions still propagate after reconnecting.
   const disconnectSync = withErrorHandling("disconnectSync", () => revokeAccess());
@@ -1405,12 +1464,20 @@ export function ExpenseProvider({ children }) {
   // Bucket operations
   // ---------------------------
   const addBucket = withErrorHandling("addBucket", async (name) => {
-    return await db.buckets.add({ name, createdAt: new Date() });
+    const id = await db.buckets.add({ name, createdAt: new Date() });
+    bumpDataVersion();
+    return id;
+  });
+
+  const renameBucket = withErrorHandling("renameBucket", async (id, name) => {
+    await db.buckets.update(id, { name: name.trim() });
+    bumpDataVersion();
   });
 
   const removeBucket = withErrorHandling("removeBucket", async (id) => {
     await db.bucketAssignments.where({ bucketId: id }).delete();
     await db.buckets.delete(id);
+    bumpDataVersion();
   });
 
   const assignToBucket = withErrorHandling("assignToBucket", async (bucketId, category) => {
@@ -1427,6 +1494,7 @@ export function ExpenseProvider({ children }) {
       await db.bucketAssignments.where({ category }).delete();
       await db.bucketAssignments.add({ bucketId, category, createdAt: new Date() });
     }
+    bumpDataVersion();
   });
 
   const getBucketsWithCategories = async () => {
@@ -1464,6 +1532,7 @@ export function ExpenseProvider({ children }) {
 
     if (invalidAssignments.length > 0) {
       await db.bucketAssignments.bulkDelete(invalidAssignments.map((a) => a.id));
+      bumpDataVersion();
     }
   });
 
@@ -1483,6 +1552,7 @@ export function ExpenseProvider({ children }) {
     addTransaction,
     updateTransaction,
     removeTransaction,
+    editTransaction,
     saveDayTransactions,
 
     addTravel,
@@ -1497,12 +1567,15 @@ export function ExpenseProvider({ children }) {
     commitImport,
 
     syncStatus,
+    dataVersion,
+    hasPendingChanges,
     prepareSync,
     planSync,
     commitSync,
     disconnectSync,
 
     addBucket,
+    renameBucket,
     removeBucket,
     assignToBucket,
     getBucketsWithCategories,

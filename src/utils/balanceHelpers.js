@@ -145,6 +145,12 @@ export function getTotalBalance(accounts, entries, now = new Date()) {
   return accounts.reduce((sum, acc) => sum + (getCurrentValuePhp(entries, accounts, acc.id, now) || 0), 0);
 }
 
+// Accounts left out of getTotalBalance because their PHP value is unknown
+// (no reconciliation, no price, or a broken price chain).
+export function getUnvaluedAccounts(accounts, entries, now = new Date()) {
+  return accounts.filter((acc) => getCurrentValuePhp(entries, accounts, acc.id, now) == null);
+}
+
 // Most recent of (an explicit markPrice entry, the rate implied by the
 // most recent convert entry: costBasis / units) at or before asOfDate -
 // see foreign-assets-plan.md §2.2. Returns null if neither exists yet.
@@ -153,16 +159,23 @@ export function getTotalBalance(accounts, entries, now = new Date()) {
 // you only need to explicitly Update Price on days you're checking
 // valuation without actually transacting.
 export function getLatestPrice(entries, accountId, asOfDate = new Date()) {
-  const asOfTs = toDayTimestamp(asOfDate);
+  const latest = getLatestPriceEntry(entries, accountId, asOfDate);
+  if (!latest) return null;
+  if (latest.type === "markPrice") return latest.pricePerUnit ?? null;
+  return latest.amount ? latest.costBasis / latest.amount : null;
+}
 
+// Date of the price getLatestPrice uses, so the UI can say how old it is.
+export function getLatestPriceDate(entries, accountId, asOfDate = new Date()) {
+  return getLatestPriceEntry(entries, accountId, asOfDate)?.date ?? null;
+}
+
+function getLatestPriceEntry(entries, accountId, asOfDate) {
+  const asOfTs = toDayTimestamp(asOfDate);
   const candidates = getAccountEntriesSorted(entries, accountId).filter(
     (e) => (e.type === "markPrice" || e.type === "convert") && toDayTimestamp(e.date) <= asOfTs
   );
-  if (candidates.length === 0) return null;
-
-  const latest = candidates[candidates.length - 1]; // chronological order preserved by filter
-  if (latest.type === "markPrice") return latest.pricePerUnit ?? null;
-  return latest.amount ? latest.costBasis / latest.amount : null;
+  return candidates.length ? candidates[candidates.length - 1] : null;
 }
 
 // Cost basis vs current market value, one point per trailing month (default
@@ -226,42 +239,38 @@ export function getValueInCostCurrency(entries, accountId, asOfDate = new Date()
 
 // The chained PHP-equivalent value of ANY account, at ANY depth:
 // - unit == null                    -> already PHP, return raw balance.
-// - costCurrencyAccountId == null   -> one hop, priced directly in PHP.
-// - costCurrencyAccountId set       -> recurse into the referenced
-//   account to find "PHP per unit of its currency" (its own PHP value
-//   divided by its own units held), then multiply through. This is what
-//   makes a stock priced in USD, priced in turn against PHP, resolve
-//   correctly without hardcoding two hops specifically - a third hop
-//   would work the same way, though nothing in this app needs one yet.
-// `_visited` is an internal cycle guard - creation-time validation should
-// already prevent a cycle from ever being stored, but this never trusts
-// stored data blindly rather than risking infinite recursion.
-export function getCurrentValuePhp(entries, accounts, accountId, asOfDate = new Date(), _visited = new Set()) {
+// - otherwise                       -> units held x PHP per unit, where
+//   "PHP per unit" walks the costCurrencyAccountId chain of prices (see
+//   getPhpPerUnit). Using the referenced account's price rather than its
+//   holdings means a stock priced in USD stays valued even when the USD
+//   account itself holds nothing.
+export function getCurrentValuePhp(entries, accounts, accountId, asOfDate = new Date()) {
   const account = accounts.find((a) => a.id === accountId);
   if (!account || account.unit == null) {
     return getCurrentBalance(entries, accountId, asOfDate);
   }
 
-  if (_visited.has(accountId)) return null; // cycle guard
-  const visited = new Set(_visited);
-  visited.add(accountId);
+  const units = getCurrentBalance(entries, accountId, asOfDate);
+  if (units == null) return null;
 
-  const valueInCostCurrency = getValueInCostCurrency(entries, accountId, asOfDate);
-  if (valueInCostCurrency == null) return null;
+  const rate = getPhpPerUnit(entries, accounts, accountId, asOfDate);
+  return rate == null ? null : units * rate;
+}
 
-  if (account.costCurrencyAccountId == null) return valueInCostCurrency; // already PHP
+// PHP per one unit of an account's currency/asset. `_visited` guards
+// against a costCurrencyAccountId cycle in stored data.
+export function getPhpPerUnit(entries, accounts, accountId, asOfDate = new Date(), _visited = new Set()) {
+  const account = accounts.find((a) => a.id === accountId);
+  if (!account) return null;
+  if (account.unit == null) return 1;
+  if (_visited.has(accountId)) return null;
 
-  const refAccount = accounts.find((a) => a.id === account.costCurrencyAccountId);
-  if (!refAccount) return null;
+  const price = getLatestPrice(entries, accountId, asOfDate);
+  if (price == null) return null;
+  if (account.costCurrencyAccountId == null) return price;
 
-  const refUnits = getCurrentBalance(entries, refAccount.id, asOfDate);
-  if (!refUnits) return null;
-
-  const refValuePhp = getCurrentValuePhp(entries, accounts, refAccount.id, asOfDate, visited);
-  if (refValuePhp == null) return null;
-
-  const rate = refValuePhp / refUnits; // PHP per unit of the referenced account's currency
-  return valueInCostCurrency * rate;
+  const refRate = getPhpPerUnit(entries, accounts, account.costCurrencyAccountId, asOfDate, new Set([..._visited, accountId]));
+  return refRate == null ? null : price * refRate;
 }
 
 // Gain/loss in the account's own cost currency (never PHP-translated - see
@@ -374,12 +383,37 @@ export function getStatementCloseEntries(entries, accountId) {
 // Advisory only - a starting-point suggestion for the date field when
 // logging a new statement close (LogStatementCloseModal), never trusted
 // as the authoritative cutoff itself (that's whatever date the user
-// actually confirms - see getStatementCloseEntries). Just "this month's
-// expected cutoff day", clamped to the last day of short months.
-export function suggestNextCutoffDate(cutoffDay, today = new Date()) {
-  const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
-  const clampedDay = Math.min(cutoffDay, daysInMonth);
-  return new Date(today.getFullYear(), today.getMonth(), clampedDay);
+// actually confirms - see getStatementCloseEntries). Returns the next
+// cutoff after the last logged close (cutoffs that shifted a few days
+// still count as that cycle), or the most recent cutoff that has already
+// passed when nothing is logged yet. Clamped to the last day of short months.
+export function suggestNextCutoffDate(cutoffDay, today = new Date(), lastCloseDate = null) {
+  const cutoffIn = (year, month) =>
+    new Date(year, month, Math.min(cutoffDay, new Date(year, month + 1, 0).getDate()));
+
+  if (lastCloseDate) {
+    const last = new Date(lastCloseDate);
+    const minGapMs = 7 * 24 * 60 * 60 * 1000;
+    for (let offset = 0; offset < 3; offset++) {
+      const candidate = cutoffIn(last.getFullYear(), last.getMonth() + offset);
+      if (candidate.getTime() - toDayTimestamp(last) > minGapMs) return candidate;
+    }
+  }
+
+  const thisMonth = cutoffIn(today.getFullYear(), today.getMonth());
+  return toDayTimestamp(thisMonth) <= toDayTimestamp(today)
+    ? thisMonth
+    : cutoffIn(today.getFullYear(), today.getMonth() - 1);
+}
+
+// The next statement close the user hasn't logged yet, and whether its
+// date has already passed. Null when the account has no cutoff day.
+export function getNextStatementClose(entries, account, today = new Date()) {
+  if (!account?.isLiability || !account.statementCutoffDay) return null;
+  const closes = getStatementCloseEntries(entries, account.id);
+  const last = closes.length ? closes[closes.length - 1].date : null;
+  const date = suggestNextCutoffDate(account.statementCutoffDay, today, last);
+  return { date, overdue: toDayTimestamp(date) < toDayTimestamp(today) };
 }
 
 // Whether the statement that closed on `cutoffDate` has been fully paid

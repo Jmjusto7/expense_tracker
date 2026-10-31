@@ -1,37 +1,33 @@
 import { useState } from "react";
-import { X, CreditCard } from "lucide-react";
+import { CreditCard } from "lucide-react";
+import { toDateInputValue } from "../utils/dateHelpers";
 import { useExpenseContext } from "../context/ExpenseContext";
 import { useInlineAddAccountType } from "../hooks/useInlineAddAccountType";
 import AccountTypeSelectCell from "./AccountTypeSelectCell";
+import Dialog, { Field, inputClass } from "./Dialog";
 
 // Liabilities (credit cards, etc) reuse the same `accounts` table as
 // assets - isLiability true, balance stored negative (0 = paid off, more
-// negative = owe more) - see db.js v8 for why that sign convention makes
-// every existing balance/transfer/linked-transaction function work
-// unmodified. Liabilities are PHP-only for now, same scope restriction as
-// Transfer/Convert - no `unit` field here.
-export default function AddLiabilityModal({ onClose }) {
+// negative = owe more) - see db.js v8. PHP-only for now.
+export default function AddLiabilityModal({ onClose, onCreated }) {
   const { addAccount, accountTypes } = useExpenseContext();
 
   const [name, setName] = useState("");
   const [amountOwed, setAmountOwed] = useState("");
-  const [startingDate, setStartingDate] = useState(new Date().toISOString().slice(0, 10));
+  const [startingDate, setStartingDate] = useState(toDateInputValue());
   const [typeId, setTypeId] = useState(null);
   const [creditLimit, setCreditLimit] = useState("");
   const [statementCutoffDay, setStatementCutoffDay] = useState("");
   const [dueDateOffsetDays, setDueDateOffsetDays] = useState("");
   const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
 
-  const { requestAddAccountType, inlineAddAccountTypeModal } = useInlineAddAccountType(
-    (newTypeId) => setTypeId(newTypeId)
-  );
+  const { requestAddAccountType, inlineAddAccountTypeModal } = useInlineAddAccountType((newTypeId) => setTypeId(newTypeId));
 
   const handleSave = async () => {
     if (!name.trim()) return setError("Please enter a name for this card/liability.");
-    if (amountOwed === "" || isNaN(Number(amountOwed)))
-      return setError(
-        "Please enter the current amount owed (0 if it's freshly opened/paid off, negative if you have a credit balance)."
-      );
+    if (amountOwed !== "" && isNaN(Number(amountOwed)))
+      return setError("Amount owed must be a number (negative if you have a credit balance), or left blank for 0.");
     if (!startingDate) return setError("Please pick a starting date.");
     if (creditLimit !== "" && (isNaN(Number(creditLimit)) || Number(creditLimit) <= 0))
       return setError("Credit limit must be a positive number, or left blank.");
@@ -40,15 +36,12 @@ export default function AddLiabilityModal({ onClose }) {
     if (dueDateOffsetDays === "" || isNaN(Number(dueDateOffsetDays)) || Number(dueDateOffsetDays) < 0)
       return setError("Please enter how many days after the statement closes payment is due.");
 
+    setSaving(true);
     try {
-      await addAccount({
+      const id = await addAccount({
         name: name.trim(),
-        // Entered as a signed "amount owed" (negative = credit balance),
-        // negated here to match the stored sign convention (positive
-        // internal balance = credit in your favor) - see file header.
-        // Deliberately NOT Math.abs'd first: that would force every entry
-        // into "owed" semantics and silently discard a real overpayment.
-        startingBalance: -Number(amountOwed),
+        // Signed "amount owed" (negative = credit balance), negated to the stored convention.
+        startingBalance: -Number(amountOwed || 0),
         startingDate,
         typeId,
         isLiability: true,
@@ -57,141 +50,109 @@ export default function AddLiabilityModal({ onClose }) {
         dueDateOffsetDays: Number(dueDateOffsetDays),
       });
       onClose();
+      onCreated?.(id);
     } catch (err) {
       console.error("Failed to add liability:", err);
       setError("Failed to save.");
+      setSaving(false);
     }
   };
 
   return (
     <>
-      <div className="fixed inset-0 flex items-center justify-center bg-ink/40 z-50">
-        <div className="bg-surface w-[90%] max-w-md rounded-xl shadow-lg p-6 relative max-h-[90vh] overflow-y-auto">
-          <button
-            onClick={onClose}
-            className="absolute top-3 right-3 text-ink-muted hover:text-ink"
+      <Dialog
+        title="Add Liability"
+        icon={CreditCard}
+        onClose={onClose}
+        onSubmit={handleSave}
+        busy={saving}
+        error={error}
+        submitClassName="bg-alert hover:bg-alert/90"
+      >
+        <div className="flex flex-col gap-4">
+          <Field label="Name" htmlFor="liability-name">
+            <input
+              id="liability-name"
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className={inputClass}
+              placeholder="e.g. Visa Card"
+            />
+          </Field>
+
+          <Field label="Type" htmlFor="liability-type">
+            <AccountTypeSelectCell
+              id="liability-type"
+              value={typeId}
+              onChange={setTypeId}
+              onRequestAdd={requestAddAccountType}
+              accountTypes={accountTypes}
+            />
+          </Field>
+
+          <Field
+            label="Current Amount Owed"
+            htmlFor="liability-owed"
+            hint="Becomes the first reconciliation. Leave blank for 0; negative if you have a credit balance."
           >
-            <X size={18} />
-          </button>
+            <input
+              id="liability-owed"
+              type="text"
+              inputMode="decimal"
+              value={amountOwed}
+              onChange={(e) => setAmountOwed(e.target.value)}
+              className={`money ${inputClass}`}
+              placeholder="e.g. 15000"
+            />
+          </Field>
 
-          <div className="flex items-center gap-2 mb-4">
-            <CreditCard size={18} className="text-alert" />
-            <h2 className="font-display text-xl text-ink">Add Liability</h2>
-          </div>
+          <Field label="Credit Limit (optional)" htmlFor="liability-limit" hint="Adjustable anytime from the card's page.">
+            <input
+              id="liability-limit"
+              type="text"
+              inputMode="decimal"
+              value={creditLimit}
+              onChange={(e) => setCreditLimit(e.target.value)}
+              className={`money ${inputClass}`}
+              placeholder="e.g. 100000"
+            />
+          </Field>
 
-          <div className="flex flex-col gap-4">
-            <div>
-              <label className="block text-sm font-medium text-ink-muted mb-1">Name</label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Field
+              label="Statement Cutoff Day"
+              htmlFor="liability-cutoff"
+              hint="Roughly which day the statement closes; you confirm the real date each cycle."
+            >
               <input
+                id="liability-cutoff"
                 type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="w-full border border-border rounded-md px-3 py-2 text-ink bg-surface focus:ring-2 focus:ring-ledger focus:outline-none"
-                placeholder="e.g. Visa Card"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-ink-muted mb-1">Type</label>
-              <AccountTypeSelectCell
-                value={typeId}
-                onChange={setTypeId}
-                onRequestAdd={requestAddAccountType}
-                accountTypes={accountTypes}
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-ink-muted mb-1">
-                Current Amount Owed
-              </label>
-              <input
-                type="text"
-                value={amountOwed}
-                onChange={(e) => setAmountOwed(e.target.value)}
-                className="money w-full border border-border rounded-md px-3 py-2 text-ink bg-surface focus:ring-2 focus:ring-ledger focus:outline-none"
-                placeholder="e.g. 15000, 0 if paid off, or -2000 if you have a credit balance"
-              />
-              <p className="text-xs text-ink-muted mt-1">
-                This becomes the card's first reconciliation. Enter a positive number for what you
-                owe, or a negative number if you've overpaid and have a credit balance.
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-ink-muted mb-1">
-                Credit Limit (optional)
-              </label>
-              <input
-                type="text"
-                value={creditLimit}
-                onChange={(e) => setCreditLimit(e.target.value)}
-                className="money w-full border border-border rounded-md px-3 py-2 text-ink bg-surface focus:ring-2 focus:ring-ledger focus:outline-none"
-                placeholder="e.g. 100000"
-              />
-              <p className="text-xs text-ink-muted mt-1">Adjustable anytime from the card's page.</p>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-ink-muted mb-1">
-                Statement Cutoff Day
-              </label>
-              <input
-                type="text"
+                inputMode="numeric"
                 value={statementCutoffDay}
                 onChange={(e) => setStatementCutoffDay(e.target.value)}
-                className="w-full border border-border rounded-md px-3 py-2 text-ink bg-surface focus:ring-2 focus:ring-ledger focus:outline-none"
+                className={inputClass}
                 placeholder="e.g. 15"
               />
-              <p className="text-xs text-ink-muted mt-1">
-                Roughly which day of the month your statement closes - just a starting suggestion.
-                Real cutoff dates shift by a day or so around weekends/holidays, so you'll confirm
-                the actual date each cycle from the card's page.
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-ink-muted mb-1">
-                Days Until Due (after statement closes)
-              </label>
+            </Field>
+            <Field label="Days Until Due (after close)" htmlFor="liability-due">
               <input
+                id="liability-due"
                 type="text"
+                inputMode="numeric"
                 value={dueDateOffsetDays}
                 onChange={(e) => setDueDateOffsetDays(e.target.value)}
-                className="w-full border border-border rounded-md px-3 py-2 text-ink bg-surface focus:ring-2 focus:ring-ledger focus:outline-none"
+                className={inputClass}
                 placeholder="e.g. 21"
               />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-ink-muted mb-1">As Of Date</label>
-              <input
-                type="date"
-                value={startingDate}
-                onChange={(e) => setStartingDate(e.target.value)}
-                className="w-full border border-border rounded-md px-3 py-2 text-ink bg-surface focus:ring-2 focus:ring-ledger focus:outline-none"
-              />
-            </div>
-
-            {error && <p className="text-alert text-sm">{error}</p>}
-
-            <div className="flex justify-end gap-3 mt-2">
-              <button
-                onClick={onClose}
-                className="border border-border text-ink-muted px-4 py-2 rounded-lg hover:bg-surface-sunken transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSave}
-                className="bg-ledger text-white px-4 py-2 rounded-lg hover:bg-ledger-dark transition-colors"
-              >
-                Save
-              </button>
-            </div>
+            </Field>
           </div>
+
+          <Field label="As Of Date" htmlFor="liability-date">
+            <input id="liability-date" type="date" value={startingDate} onChange={(e) => setStartingDate(e.target.value)} className={inputClass} />
+          </Field>
         </div>
-      </div>
+      </Dialog>
 
       {inlineAddAccountTypeModal}
     </>

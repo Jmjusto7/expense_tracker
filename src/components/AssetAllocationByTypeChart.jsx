@@ -1,77 +1,22 @@
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
-import { formatCurrencyPrecise } from "../utils/formatCurrency";
 import { getCurrentValuePhp } from "../utils/balanceHelpers";
+import DonutChart from "./DonutChart";
 
-// Same coordinated palette as the other pie charts in the app.
-const COLORS = [
-  "#1f6f5c",
-  "#b8622e",
-  "#3d8a76",
-  "#d4884f",
-  "#164f42",
-  "#8a4a1f",
-  "#6b8a7f",
-  "#a1423b",
-];
-
-export default function AssetAllocationByTypeChart({
-  accounts,
-  accountTypes,
-  balanceEntries,
-  heightClassName = "h-72",
-  innerRadius = 55,
-  outerRadius = 100,
-  compactLabel = false,
-}) {
+export default function AssetAllocationByTypeChart({ accounts, accountTypes, balanceEntries, heightClassName = "h-56" }) {
   const typeNameById = Object.fromEntries(accountTypes.map((t) => [t.id, t.name]));
 
   const groups = {};
   accounts.forEach((acc) => {
     const value = getCurrentValuePhp(balanceEntries, accounts, acc.id);
-    if (value == null || value <= 0) return; // same "no negative/unknown slices" treatment as AssetCompositionChart
-
-    const label = acc.typeId != null ? typeNameById[acc.typeId] || "Unclassified" : "Unclassified";
+    if (value == null || value <= 0) return; // same exclusions as AssetCompositionChart
+    const label = (acc.typeId != null && typeNameById[acc.typeId]) || "Unclassified";
     groups[label] = (groups[label] || 0) + value;
   });
 
-  const total = Object.values(groups).reduce((s, v) => s + v, 0);
-
-  const data = Object.entries(groups)
-    .map(([name, value]) => ({ name, value, percent: total ? ((value / total) * 100).toFixed(1) : 0 }))
-    .sort((a, b) => b.value - a.value);
+  const data = Object.entries(groups).map(([name, value]) => ({ name, value }));
 
   if (data.length === 0) {
-    return (
-      <p className="text-ink-muted text-sm text-center py-10">
-        No positive balances to allocate yet.
-      </p>
-    );
+    return <p className="text-ink-muted text-sm text-center py-10">No positive balances to allocate yet.</p>;
   }
 
-  return (
-    <div className={`money w-full ${heightClassName}`}>
-      <ResponsiveContainer>
-        <PieChart>
-          <Pie
-            data={data}
-            dataKey="value"
-            nameKey="name"
-            cx="50%"
-            cy="50%"
-            innerRadius={innerRadius}
-            outerRadius={outerRadius}
-            label={({ name, percent }) => (compactLabel ? `${percent}%` : `${name}: ${percent}%`)}
-          >
-            {data.map((entry, index) => (
-              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-            ))}
-          </Pie>
-          <Tooltip
-            formatter={(value, name) => [formatCurrencyPrecise(value), name]}
-            contentStyle={{ fontFamily: "var(--font-mono)", fontSize: 13 }}
-          />
-        </PieChart>
-      </ResponsiveContainer>
-    </div>
-  );
+  return <DonutChart data={data} heightClassName={heightClassName} />;
 }

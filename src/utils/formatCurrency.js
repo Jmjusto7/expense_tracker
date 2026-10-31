@@ -7,7 +7,8 @@ const CURRENCY_SYMBOL = "₱";
 // (some places showed cents, some didn't, for the same underlying number).
 export const formatCurrency = (amount, { decimals = 0 } = {}) => {
   const n = Number(amount || 0);
-  return `${CURRENCY_SYMBOL}${n.toLocaleString(undefined, {
+  const sign = n < 0 ? "-" : "";
+  return `${sign}${CURRENCY_SYMBOL}${Math.abs(n).toLocaleString(undefined, {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
   })}`;
