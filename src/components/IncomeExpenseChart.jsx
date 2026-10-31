@@ -2,6 +2,7 @@ import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, C
 import { formatMonthYear } from "../utils/dateHelpers";
 import { formatCurrency } from "../utils/formatCurrency";
 import { compactCurrency, Y_AXIS_WIDTH } from "../utils/chartFormat";
+import { hatchDefs } from "../utils/chartPatterns";
 
 const SERIES_LABELS = { income: "Income", expense: "Expense", net: "Net" };
 
@@ -10,6 +11,7 @@ export default function IncomeExpenseChart({ data }) {
     <div className="money w-full h-64">
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart data={data} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+          {hatchDefs("expenseHatch", "#a1423b")}
           <CartesianGrid strokeDasharray="3 3" stroke="#dbe3db" />
           <XAxis
             dataKey="date"
@@ -28,8 +30,8 @@ export default function IncomeExpenseChart({ data }) {
           <Legend wrapperStyle={{ fontSize: 12 }} />
 
           <Bar dataKey="income" fill="#1f6f5c" name="Income" radius={[3, 3, 0, 0]} />
-          <Bar dataKey="expense" fill="#a1423b" name="Expense" radius={[3, 3, 0, 0]} />
-          <Line type="monotone" dataKey="net" stroke="#b8622e" strokeWidth={2} dot={{ r: 3 }} name="Net" />
+          <Bar dataKey="expense" fill="url(#expenseHatch)" stroke="#a1423b" name="Expense (hatched)" radius={[3, 3, 0, 0]} />
+          <Line type="monotone" dataKey="net" stroke="#b8622e" strokeWidth={2} strokeDasharray="6 3" dot={{ r: 3 }} name="Net (dashed)" />
         </ComposedChart>
       </ResponsiveContainer>
     </div>

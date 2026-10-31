@@ -27,7 +27,6 @@ export default function SyncTab() {
     if (!configured) {
         return (
             <div className="text-sm text-ink-muted">
-                <h2 className="text-lg font-semibold text-ink mb-2">Google Drive sync</h2>
                 <p className="mb-4">
                     Sync isn't set up. Add <code>VITE_GOOGLE_CLIENT_ID</code> to <code>.env.local</code> and restart the dev
                     server - see the README for the one-time Google Cloud setup.
@@ -39,14 +38,13 @@ export default function SyncTab() {
 
     return (
         <div>
-            <h2 className="text-lg font-semibold text-ink mb-2">Google Drive sync</h2>
             <p className="text-sm text-ink-muted mb-4">
                 Keeps a copy of your data in a hidden app folder in your Google Drive. After you tap Sync once, the app keeps
                 syncing on its own while the Google sign-in is valid (about an hour). Anything changed on both devices shows
                 &quot;Needs input&quot; - tap Sync to decide.
             </p>
 
-            <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm mb-4">
+            <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm mb-4">
                 <dt className="text-ink-muted">Status</dt>
                 <dd className="font-medium text-ink">{SYNC_STATUS_LABELS[status]}</dd>
                 <dt className="text-ink-muted">Last synced</dt>

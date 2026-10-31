@@ -1,4 +1,4 @@
-import { getAttentionItems } from "./attention";
+import { getAttentionItems, getUpcomingLiabilityEvents, liabilityStatus } from "./attention";
 import { buildRowUpserts, blankRow, getLastPaidFrom, rememberPaidFrom } from "./transactionRows";
 import { colorForKey, SLICE_COLORS } from "./chartFormat";
 
@@ -31,6 +31,50 @@ describe("getAttentionItems", () => {
         const accounts = [{ id: "usd", name: "USD", unit: "USD" }];
         const entries = [{ id: "1", accountId: "usd", type: "reconciliation", balance: 10, date: new Date(2026, 9, 19) }];
         expect(getAttentionItems(accounts, entries, today).map((i) => i.key)).toEqual(["price-usd"]);
+    });
+});
+
+describe("liabilityStatus", () => {
+    it("maps a statement to a tone and short label", () => {
+        expect(liabilityStatus({}, today)).toMatchObject({ tone: "muted", short: "No statement" });
+        expect(liabilityStatus({ dueDate: new Date(2026, 9, 1), remainingDue: 0 }, today).tone).toBe("ok");
+        expect(liabilityStatus({ dueDate: new Date(2026, 9, 17), remainingDue: 50 }, today)).toMatchObject({ tone: "alert", short: "Overdue 3d" });
+        expect(liabilityStatus({ dueDate: new Date(2026, 9, 20), remainingDue: 50 }, today).short).toBe("Due today");
+        expect(liabilityStatus({ dueDate: new Date(2026, 9, 24), remainingDue: 50 }, today)).toMatchObject({ tone: "warning", days: 4 });
+        expect(liabilityStatus({ dueDate: new Date(2026, 10, 15), remainingDue: 50 }, today).tone).toBe("neutral");
+    });
+});
+
+describe("getUpcomingLiabilityEvents", () => {
+    it("lists overdue payments and unlogged closes, soonest first, and skips assets", () => {
+        const accounts = [
+            { id: "bank", name: "Bank" },
+            { id: "card", name: "Card", isLiability: true, statementCutoffDay: 15, dueDateOffsetDays: 10 },
+        ];
+        const entries = [
+            { id: "3", accountId: "card", type: "reconciliation", balance: -500, date: new Date(2026, 8, 1) },
+            { id: "4", accountId: "card", type: "statementClose", date: new Date(2026, 8, 5) },
+        ];
+
+        const events = getUpcomingLiabilityEvents(accounts, entries, today);
+
+        expect(events.map((e) => [e.key, e.status])).toEqual([
+            ["due-card", "overdue"],
+            ["close-card", "overdue"],
+        ]);
+        expect(events[0].amount).toBeGreaterThan(0);
+        expect(events.every((e) => e.account.id === "card")).toBe(true);
+    });
+
+    it("leaves out due dates beyond the horizon", () => {
+        const accounts = [{ id: "card", name: "Card", isLiability: true, statementCutoffDay: 15, dueDateOffsetDays: 25 }];
+        const entries = [
+            { id: "1", accountId: "card", type: "reconciliation", balance: -100, date: new Date(2026, 9, 14) },
+            { id: "2", accountId: "card", type: "statementClose", date: new Date(2026, 9, 15) },
+        ];
+        // Due Nov 9 - 20 days out.
+        expect(getUpcomingLiabilityEvents(accounts, entries, today, 14).some((e) => e.kind === "due")).toBe(false);
+        expect(getUpcomingLiabilityEvents(accounts, entries, today, 30).find((e) => e.kind === "due")).toMatchObject({ status: "upcoming" });
     });
 });
 

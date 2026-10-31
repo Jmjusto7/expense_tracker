@@ -60,7 +60,12 @@ export default function YearExpensesPage() {
 
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
-      <h1 className="font-display text-2xl text-ink mb-6">Expenses</h1>
+      <div className="flex items-center justify-between gap-2 mb-6">
+        <h1 className="font-display text-2xl text-ink">Expenses overview</h1>
+        <Link to="/expenses" className="text-sm font-medium text-ledger-dark hover:underline">
+          This month ›
+        </Link>
+      </div>
 
       {/* Bucket/category drill-down, stat cards, and monthly trend now live
           here - this is where filters get *set*; MonthExpensesPage and

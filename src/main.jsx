@@ -12,7 +12,10 @@ import "@fontsource/ibm-plex-mono/600.css";
 import App from "./App";
 import "./index.css";
 import { requestPersistentStorage } from "./utils/storagePersistence";
+import { applyHideBalances } from "./hooks/useHideBalances";
+import "./utils/installPrompt";
 
+applyHideBalances();
 requestPersistentStorage();
 
 ReactDOM.createRoot(document.getElementById("root")).render(

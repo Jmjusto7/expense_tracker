@@ -5,12 +5,16 @@ import { useExpenseContext } from "../context/ExpenseContext";
 // useEffect + useState pair in SummaryPage; TravelDetailPage's bucket
 // drill-down needs the exact same data.
 export function useBucketsWithCategoriesState() {
-  const { getBucketsWithCategories } = useExpenseContext();
+  const { getBucketsWithCategories, dataVersion } = useExpenseContext();
   const [state, setState] = useState({ buckets: [], loaded: false });
 
   useEffect(() => {
-    getBucketsWithCategories().then((b) => setState({ buckets: b || [], loaded: true }));
-  }, []);
+    let active = true;
+    getBucketsWithCategories().then((b) => active && setState({ buckets: b || [], loaded: true }));
+    return () => {
+      active = false;
+    };
+  }, [dataVersion]);
 
   return state;
 }

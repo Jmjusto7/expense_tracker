@@ -101,8 +101,9 @@ export default function AccountBalanceChart({ entries, accountId, unit = null })
             dataKey="book"
             stroke="#1f6f5c"
             strokeWidth={2}
-            dot={{ r: 2 }}
-            name="Book"
+            dot={false}
+            legendType="line"
+            name="Book (line)"
             connectNulls
           />
 
@@ -113,8 +114,9 @@ export default function AccountBalanceChart({ entries, accountId, unit = null })
             type="linear"
             dataKey="actual"
             stroke="none"
-            dot={{ r: 5, fill: "#b8622e" }}
-            name="Reconciled"
+            dot={{ r: 5, fill: "#b8622e", stroke: "#ffffff", strokeWidth: 1.5 }}
+            legendType="circle"
+            name="Reconciled (dots)"
             connectNulls={false}
           />
         </ComposedChart>

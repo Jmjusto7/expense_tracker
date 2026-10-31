@@ -1,11 +1,11 @@
 import { ChevronDown } from "lucide-react";
 
-// Collapsible section with a summary line; children render in a card grid.
-export default function AccountGroup({ id, title, summary, collapsed, onToggle, children }) {
+// Collapsible section with a summary line; children render as a card grid, or as rows when `list`.
+export default function AccountGroup({ id, title, summary, collapsed, onToggle, list = false, children }) {
     const panelId = `group-panel-${id}`;
     return (
-        <section className="mb-6">
-            <h2 className="mb-3">
+        <section className={list ? "mb-4" : "mb-6"}>
+            <h2 className={list ? "mb-1.5" : "mb-3"}>
                 <button
                     type="button"
                     onClick={onToggle}
@@ -22,7 +22,15 @@ export default function AccountGroup({ id, title, summary, collapsed, onToggle, 
                     <span className="ml-auto flex flex-wrap items-baseline gap-x-3 text-sm">{summary}</span>
                 </button>
             </h2>
-            <div id={panelId} hidden={collapsed} className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 items-start">
+            <div
+                id={panelId}
+                hidden={collapsed}
+                className={
+                    list
+                        ? "bg-surface border border-border rounded-xl divide-y divide-border overflow-hidden"
+                        : "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 items-start"
+                }
+            >
                 {children}
             </div>
         </section>

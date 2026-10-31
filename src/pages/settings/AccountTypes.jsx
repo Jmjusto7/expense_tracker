@@ -44,7 +44,6 @@ const AccountTypesTab = () => {
 
   return (
     <div>
-      <h2 className="text-lg font-semibold text-ink mb-4">Account Types</h2>
       <p className="text-ink-muted text-sm mb-4">
         Classifications like Bank Account, Digital Bank, Investment, or Time Deposit. Assign
         each account to a type from that account's edit form - removing a type here leaves its

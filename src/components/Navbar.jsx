@@ -1,10 +1,11 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import { createPortal } from "react-dom";
-import { Home, Receipt, Plane, Settings, Download, Upload, Plus, Wallet, CreditCard, MoreHorizontal, CloudOff } from "lucide-react";
+import { Home, Receipt, Plane, Settings, Download, Upload, Plus, Wallet, CreditCard, MoreHorizontal, CloudOff, MonitorDown } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useExpenseContext } from "../context/ExpenseContext";
 import { useSync } from "../context/SyncContext";
 import { useOnlineStatus } from "../hooks/useOnlineStatus";
+import { useInstallApp } from "../hooks/useInstallApp";
 import SyncIndicator from "./SyncIndicator";
 import AddTransactionModal from "./AddTransactionModal";
 import ImportPreviewModal from "./ImportPreviewModal";
@@ -35,6 +36,8 @@ export default function Navbar() {
   const { exportExpenses, parseImportFile, commitImport } = useExpenseContext();
   const { message: syncMessage } = useSync();
   const online = useOnlineStatus();
+  const install = useInstallApp();
+  const handleInstall = () => (install.status === "available" ? install.promptInstall() : navigate("/settings/install"));
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const moreRef = useRef(null);
@@ -180,6 +183,12 @@ export default function Navbar() {
                 <span className="hidden md:inline">Export</span>
               </button>
               <SyncIndicator />
+              {install.status === "available" && (
+                <button onClick={handleInstall} className={actionClass} aria-label="Install app" title="Install app">
+                  <MonitorDown size={15} aria-hidden="true" />
+                  <span className="hidden md:inline">Install</span>
+                </button>
+              )}
               <NavLink
                 to="/settings"
                 aria-label="Settings"
@@ -219,6 +228,11 @@ export default function Navbar() {
                     <button role="menuitem" className="w-full flex items-center gap-2 px-3 py-2 text-sm text-ink hover:bg-surface-sunken" onClick={() => { setMoreOpen(false); navigate("/settings"); }}>
                       <Settings size={15} aria-hidden="true" /> Settings
                     </button>
+                    {install.status !== "installed" && (
+                      <button role="menuitem" className="w-full flex items-center gap-2 px-3 py-2 text-sm text-ink hover:bg-surface-sunken" onClick={() => { setMoreOpen(false); handleInstall(); }}>
+                        <MonitorDown size={15} aria-hidden="true" /> Install app
+                      </button>
+                    )}
                   </div>
                 )}
               </div>

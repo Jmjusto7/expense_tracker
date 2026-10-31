@@ -55,7 +55,7 @@ export default function MonthExpensesPage() {
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8">
       {/* Header */}
       <div className="mb-6">
-        <Breadcrumbs items={[{ label: "Expenses", to: "/expenses" }, { label: year }]} />
+        <Breadcrumbs items={[{ label: "Expenses", to: "/expenses/overview" }, { label: year }]} />
         <h1 className="font-display text-2xl text-ink">{year} — Monthly Expenses</h1>
       </div>
 

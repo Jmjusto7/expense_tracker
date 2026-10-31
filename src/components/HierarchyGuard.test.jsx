@@ -14,7 +14,7 @@ function renderGuard(path) {
     <MemoryRouter initialEntries={[path]}>
       <ExpenseProvider>
         <Routes>
-          <Route path="/expenses" element={<CurrentPath />} />
+          <Route path="/expenses/overview" element={<CurrentPath />} />
           <Route
             path="/expenses/:year/:month"
             element={<HierarchyGuard><CurrentPath /></HierarchyGuard>}
@@ -40,10 +40,10 @@ describe('HierarchyGuard', () => {
     expect(await screen.findByText('/expenses/2026/March')).toBeTruthy()
   })
 
-  it('redirects an unknown year to the expenses index after loading', async () => {
+  it('redirects an unknown year to the expenses overview after loading', async () => {
     renderGuard('/expenses/2099/March')
 
-    await waitFor(() => expect(screen.getByText('/expenses')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('/expenses/overview')).toBeTruthy())
   })
 
   it('keeps UUID account and travel links', async () => {

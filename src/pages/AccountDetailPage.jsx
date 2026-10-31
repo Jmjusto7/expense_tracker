@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Wallet, TrendingUp, Scale, Trash2, ArrowRightLeft, ArrowLeftRight } from "lucide-react";
 import { useExpenseContext } from "../context/ExpenseContext";
 import { formatCurrency } from "../utils/formatCurrency";
+import HideBalancesToggle from "../components/HideBalancesToggle";
 import { formatDate } from "../utils/dateHelpers";
 import {
   getCurrentBalance,
@@ -150,13 +151,14 @@ export default function AccountDetailPage() {
   };
 
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8">
+    <div data-balances className="max-w-4xl mx-auto px-4 sm:px-6 py-8">
       <Breadcrumbs items={[{ label: "Assets", to: "/assets" }, { label: account.name }]} />
 
       <div className="mt-3 mb-6">
         <div className="flex items-center gap-2">
           <Wallet size={18} className="text-ledger-dark" />
           <h1 className="font-display text-2xl text-ink">{account.name}</h1>
+          <HideBalancesToggle className="ml-auto" />
         </div>
 
         {isForeign ? (
@@ -246,7 +248,7 @@ export default function AccountDetailPage() {
       </div>
 
       {isForeign && (
-        <div className="grid sm:grid-cols-3 gap-4 mb-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
           <StatCard
             label="Total Invested"
             value={gainLoss == null ? "—" : `${formatNumber(gainLoss.totalCostBasis)} ${costCurrencyLabel}`}
@@ -276,7 +278,7 @@ export default function AccountDetailPage() {
           up to the Total Invested / Current Value row above - this row is
           now just the per-unit reference numbers. */}
       {isForeign && (
-        <div className="grid sm:grid-cols-2 gap-4 mb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
           <StatCard
             label="Average Cost"
             value={avgCost == null ? "—" : `${formatNumber(avgCost, 4)} ${costCurrencyLabel}/${account.unit}`}
@@ -289,7 +291,7 @@ export default function AccountDetailPage() {
       )}
 
       {lastPeriod && (
-        <div className="grid sm:grid-cols-2 gap-4 mb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
           <StatCard
             label={lastPeriod.impliedSpend < 0 ? "Unaccounted Inflow (last period)" : "Implied Spend (last period)"}
             value={
@@ -371,7 +373,7 @@ export default function AccountDetailPage() {
                   </td>
                   <td className="border border-border px-3 py-2 text-ink-muted">
                     {entrySupplementalNote(e) && (
-                      <div className="text-xs text-ink-muted/80">{entrySupplementalNote(e)}</div>
+                      <div className={`text-xs text-ink-muted/80 ${e.type === "convert" ? "sensitive" : ""}`}>{entrySupplementalNote(e)}</div>
                     )}
                     {e.comments}
                   </td>

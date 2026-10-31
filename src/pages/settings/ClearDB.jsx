@@ -29,7 +29,6 @@ export default function ClearDBTab() {
 
   return (
     <div className="flex flex-col gap-4 max-w-md">
-      <h2 className="text-lg font-semibold text-ink">Clear Database</h2>
       <p className="text-ink-muted text-sm">
         This will permanently delete all years, months, days, transactions, travels, buckets,
         bucket assignments, accounts, account types, and balance/income entries. This cannot be undone.

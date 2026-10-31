@@ -48,7 +48,8 @@ export default function InvestmentGrowthChart({ data, unitLabel }) {
             stroke="#6b7570"
             strokeWidth={2}
             fill="url(#costBasisFill)"
-            name="Total Invested"
+            legendType="square"
+            name="Total Invested (shaded steps)"
           />
 
           {/* Current value - the line that actually moves with the market,
@@ -60,7 +61,8 @@ export default function InvestmentGrowthChart({ data, unitLabel }) {
             stroke="#b8622e"
             strokeWidth={2.5}
             dot={{ r: 3 }}
-            name="Current Value"
+            legendType="line"
+            name="Current Value (line)"
           />
         </ComposedChart>
       </ResponsiveContainer>

@@ -1,15 +1,15 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Wallet, AlertTriangle } from "lucide-react";
+import { Plus, AlertTriangle, ChevronDown } from "lucide-react";
 import { useExpenseContext } from "../context/ExpenseContext";
 import AddAccountModal from "../components/AddAccountModal";
 import EditAccountModal from "../components/EditAccountModal";
 import AccountGroup from "../components/AccountGroup";
 import CardActions from "../components/CardActions";
-import AssetCompositionChart from "../components/AssetCompositionChart";
-import AssetAllocationByTypeChart from "../components/AssetAllocationByTypeChart";
+import LabelledStackBar from "../components/LabelledStackBar";
 import IncomeExpenseChart from "../components/IncomeExpenseChart";
 import ImpliedSpendChart from "../components/ImpliedSpendChart";
+import HideBalancesToggle from "../components/HideBalancesToggle";
 import { useStoredState } from "../hooks/useStoredState";
 import { formatCurrency } from "../utils/formatCurrency";
 import { formatUnits } from "../utils/chartFormat";
@@ -23,35 +23,58 @@ import {
   getImpliedSpendPeriods,
   getLatestPriceDate,
 } from "../utils/balanceHelpers";
+import { STALE_RECONCILIATION_DAYS } from "../utils/attention";
 import { buildMonthlyIncomeExpense } from "../utils/incomeExpenseHelpers";
-import {
-  buildAccountTree,
-  flattenDescendants,
-  groupRootsByType,
-  sortRoots,
-  SORT_OPTIONS,
-} from "../utils/accountHierarchy";
+import { buildAccountTree, flattenDescendants, groupRootsByType, sortRoots, SORT_OPTIONS } from "../utils/accountHierarchy";
 
-const reconciledLabel = (days) =>
-  days === null ? "Not reconciled yet" : days === 0 ? "Reconciled today" : `Reconciled ${days} day${days === 1 ? "" : "s"} ago`;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const ago = (days) => (days === 0 ? "today" : `${days}d ago`);
+const initials = (name) =>
+  name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0].toUpperCase())
+    .join("");
+
+// ▲/▼ with the % change; the arrow and sign carry the meaning, colour only reinforces it.
+function Change({ now, before, className = "" }) {
+  if (now == null || before == null || before === 0 || now === before) {
+    return <span className={`text-[11px] text-ink-muted ${className}`}>{now != null && before != null ? "– 0%" : ""}</span>;
+  }
+  const pct = ((now - before) / Math.abs(before)) * 100;
+  const up = pct > 0;
+  return (
+    <span
+      className={`text-[11px] font-medium ${up ? "text-ledger-dark" : "text-alert"} ${className}`}
+      title={`${up ? "Up" : "Down"} ${Math.abs(pct).toFixed(1)}% vs last month`}
+    >
+      {up ? "▲" : "▼"} {Math.abs(pct).toFixed(1)}%
+    </span>
+  );
+}
 
 export default function AccountsPage() {
   const navigate = useNavigate();
   const { hash } = useLocation();
-  useEffect(() => {
-    if (hash) document.getElementById(hash.slice(1))?.scrollIntoView();
-  }, [hash]);
-  const { accounts, balanceEntries, allTransactions, accountTypes, removeAccount } = useExpenseContext();
+  const { isLoaded = true, accounts, balanceEntries, allTransactions, accountTypes, removeAccount } = useExpenseContext();
 
-  // Liabilities live on their own page - same `accounts` table, filtered by isLiability.
   const assetAccounts = useMemo(() => accounts.filter((a) => !a.isLiability), [accounts]);
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [editAccountId, setEditAccountId] = useState(null);
   const [sortBy, setSortBy] = useStoredState("tracker.assets.sort", "value");
   const [collapsed, setCollapsed] = useStoredState("tracker.assets.collapsed", []);
+  const [showHistory, setShowHistory] = useState(hash === "#history");
   const [impliedAccountId, setImpliedAccountId] = useState("all");
   const [deleteError, setDeleteError] = useState("");
+
+  useEffect(() => {
+    if (hash) document.getElementById(hash.slice(1))?.scrollIntoView();
+  }, [hash]);
+
+  const today = useMemo(() => new Date(), []);
+  const monthAgo = useMemo(() => new Date(today.getTime() - 30 * DAY_MS), [today]);
 
   const handleRemoveAccount = async (accountId) => {
     setDeleteError("");
@@ -63,13 +86,18 @@ export default function AccountsPage() {
   };
 
   const valueById = useMemo(
-    () => new Map(assetAccounts.map((a) => [a.id, getCurrentValuePhp(balanceEntries, assetAccounts, a.id)])),
-    [assetAccounts, balanceEntries]
+    () => new Map(assetAccounts.map((a) => [a.id, getCurrentValuePhp(balanceEntries, assetAccounts, a.id, today)])),
+    [assetAccounts, balanceEntries, today]
+  );
+  const priorById = useMemo(
+    () => new Map(assetAccounts.map((a) => [a.id, getCurrentValuePhp(balanceEntries, assetAccounts, a.id, monthAgo)])),
+    [assetAccounts, balanceEntries, monthAgo]
   );
   const valueOf = (account) => valueById.get(account.id) ?? null;
   const staleDaysOf = (account) => daysSinceLastReconciliation(balanceEntries, account.id);
 
-  const totalBalance = useMemo(() => getTotalBalance(assetAccounts, balanceEntries), [assetAccounts, balanceEntries]);
+  const totalBalance = useMemo(() => getTotalBalance(assetAccounts, balanceEntries, today), [assetAccounts, balanceEntries, today]);
+  const priorTotal = useMemo(() => getTotalBalance(assetAccounts, balanceEntries, monthAgo), [assetAccounts, balanceEntries, monthAgo]);
   const unvalued = useMemo(() => getUnvaluedAccounts(assetAccounts, balanceEntries), [assetAccounts, balanceEntries]);
   const liabilityTotal = useMemo(
     () => getTotalBalance(accounts.filter((a) => a.isLiability), balanceEntries),
@@ -105,110 +133,86 @@ export default function AccountsPage() {
   const toggleGroup = (key) =>
     setCollapsed((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
 
-  const renderAccountCard = (account) => {
+  const renderRow = (account, depth = 0) => {
     const isForeign = account.unit != null;
     const balance = getCurrentBalance(balanceEntries, account.id);
     const phpValue = valueOf(account);
+    const staleDays = staleDaysOf(account);
     const priceDate = isForeign ? getLatestPriceDate(balanceEntries, account.id) : null;
-    const balanceColor = phpValue != null && phpValue < 0 ? "text-alert" : "text-ledger-dark";
+    const priceAge = priceDate ? Math.max(0, Math.round((today - new Date(priceDate)) / DAY_MS)) : null;
+    const stale = staleDays === null || staleDays > STALE_RECONCILIATION_DAYS;
 
-    return (
-      <div className="group relative bg-surface rounded-lg border border-border hover:border-ledger focus-within:border-ledger p-5 transition-colors">
-        <div className="flex items-start justify-between gap-2 mb-2">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <Wallet size={15} className="text-ledger-dark shrink-0" aria-hidden="true" />
-            <h3 className="text-lg font-semibold text-ink truncate" title={account.name}>
-              <Link
-                to={`/assets/${account.id}`}
-                className="focus-visible:outline-none after:absolute after:inset-0 after:rounded-lg focus-visible:after:ring-2 focus-visible:after:ring-ledger"
-              >
-                {account.name}
-              </Link>
-            </h3>
-          </div>
-          <CardActions
-            label={account.name}
-            onEdit={() => setEditAccountId(account.id)}
-            onDelete={() => handleRemoveAccount(account.id)}
-            deleteTitle="Delete account? Removes all its income and reconciliation history."
-          />
-        </div>
-
-        {isForeign ? (
-          <>
-            <div className="money text-xl font-bold mb-0.5 text-ink">{balance == null ? "—" : formatUnits(balance, account.unit)}</div>
-            <div className={`money text-sm mb-1 ${phpValue == null ? "text-warning" : balanceColor}`}>
-              {phpValue == null ? "Not valued - no price yet" : `≈ ${formatCurrency(phpValue)}`}
-            </div>
-          </>
-        ) : (
-          <div className={`money text-xl font-bold mb-1 ${phpValue == null ? "text-warning" : balanceColor}`}>
-            {phpValue == null ? "Not valued yet" : formatCurrency(phpValue)}
-          </div>
-        )}
-
-        <div className="text-xs text-ink-muted space-y-0.5">
-          <div>{reconciledLabel(staleDaysOf(account))}</div>
-          {isForeign && <div>{priceDate ? `Price as of ${formatDate(priceDate)}` : "No price logged"}</div>}
-        </div>
-      </div>
-    );
-  };
-
-  // Accounts priced in this one (e.g. a stock priced in a USD wallet), indented per depth.
-  const renderDescendantRow = ({ account, depth }) => {
-    const isForeign = account.unit != null;
-    const balance = getCurrentBalance(balanceEntries, account.id);
-    const phpValue = valueOf(account);
+    let sub;
+    if (phpValue == null) sub = <span className="text-warning">⚠ Not valued - no price yet</span>;
+    else if (isForeign)
+      sub = (
+        <>
+          {priceAge == null ? "no price" : `price ${ago(priceAge)}`}
+          {" · "}
+          <span className="money">{balance == null ? "—" : formatUnits(balance, account.unit)}</span>
+        </>
+      );
+    else if (stale) sub = <span className="text-warning">⚠ {staleDays === null ? "Never reconciled" : `Not reconciled · ${staleDays}d`}</span>;
+    else sub = `Reconciled ${ago(staleDays)}`;
 
     return (
       <div
         key={account.id}
-        style={{ paddingLeft: `${0.75 + depth * 1}rem` }}
-        className="group relative flex items-center justify-between gap-3 py-2 pr-3 border-t border-border/60 hover:bg-surface focus-within:bg-surface transition-colors"
+        className={`group relative flex items-center gap-3 py-2.5 pr-2 hover:bg-surface-sunken focus-within:bg-surface-sunken transition-colors ${depth ? "bg-surface-sunken/60" : ""}`}
+        style={{ paddingLeft: `${0.75 + depth * 1.25}rem` }}
       >
-        <div className="min-w-0 flex-1">
+        <span
+          className={`h-8 w-8 rounded-lg grid place-items-center shrink-0 text-[11px] font-bold ${isForeign ? "bg-travel-soft text-travel-dark" : "bg-ledger-soft text-ledger-dark"
+            }`}
+          aria-hidden="true"
+        >
+          {isForeign ? account.unit.slice(0, 3) : initials(account.name) || "?"}
+        </span>
+        <div className="flex-1 min-w-0">
           <Link
             to={`/assets/${account.id}`}
-            className="block text-sm font-medium text-ink truncate focus-visible:outline-none after:absolute after:inset-0 focus-visible:after:ring-2 focus-visible:after:ring-ledger"
             title={account.name}
+            className="block text-sm font-medium text-ink truncate focus-visible:outline-none after:absolute after:inset-0 focus-visible:after:ring-2 focus-visible:after:ring-inset focus-visible:after:ring-ledger"
           >
+            {depth > 0 && <span className="text-ink-muted" aria-hidden="true">↳ </span>}
             {account.name}
           </Link>
-          {isForeign && (
-            <div className="money text-xs text-ink-muted">{balance == null ? "—" : formatUnits(balance, account.unit)}</div>
-          )}
+          <div className="text-[11px] text-ink-muted truncate">{sub}</div>
         </div>
-
-        <div className="flex items-center gap-2 shrink-0">
-          <span className={`money text-sm font-semibold ${phpValue == null ? "text-warning" : phpValue < 0 ? "text-alert" : "text-ledger-dark"}`}>
-            {phpValue == null ? "Not valued" : formatCurrency(phpValue)}
-          </span>
-          <CardActions
-            compact
-            size={12}
-            label={account.name}
-            onEdit={() => setEditAccountId(account.id)}
-            onDelete={() => handleRemoveAccount(account.id)}
-            deleteTitle="Delete account? Removes all its income and reconciliation history."
-          />
+        <div className="text-right shrink-0">
+          <div className={`money text-sm font-semibold ${phpValue == null ? "text-warning" : phpValue < 0 ? "text-alert" : "text-ink"}`}>
+            {phpValue == null ? "—" : formatCurrency(phpValue)}
+          </div>
+          <Change now={phpValue} before={priorById.get(account.id) ?? null} />
         </div>
+        <CardActions
+          compact
+          size={13}
+          label={account.name}
+          onEdit={() => setEditAccountId(account.id)}
+          onDelete={() => handleRemoveAccount(account.id)}
+          deleteTitle="Delete account? Removes all its income and reconciliation history."
+        />
       </div>
     );
   };
 
-  return (
-    <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
-      <div className="flex flex-wrap justify-between items-center mb-6 gap-2">
-        <h1 className="font-display text-2xl text-ink">Assets</h1>
+  const totalChange = priorTotal ? ((totalBalance - priorTotal) / Math.abs(priorTotal)) * 100 : null;
 
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="flex items-center gap-2 bg-ledger hover:bg-ledger-dark text-white px-4 py-2 rounded-lg transition-colors"
-        >
-          <Plus size={16} aria-hidden="true" />
-          Add Account
-        </button>
+  return (
+    <div data-balances className="max-w-3xl mx-auto px-4 sm:px-6 py-8">
+      <div className="flex flex-wrap justify-between items-center mb-4 gap-2">
+        <h1 className="font-display text-2xl text-ink">Assets</h1>
+        <div className="flex items-center gap-2">
+          <HideBalancesToggle />
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-2 bg-ledger hover:bg-ledger-dark text-white px-4 py-2 rounded-lg transition-colors"
+          >
+            <Plus size={16} aria-hidden="true" />
+            Account
+          </button>
+        </div>
       </div>
 
       {deleteError && (
@@ -217,25 +221,30 @@ export default function AccountsPage() {
         </p>
       )}
 
-      {assetAccounts.length === 0 && <p className="text-ink-muted">No accounts yet. Add one to start tracking balances.</p>}
+      {!isLoaded && (
+        <p role="status" className="text-ink-muted">
+          Loading…
+        </p>
+      )}
+
+      {isLoaded && assetAccounts.length === 0 && <p className="text-ink-muted">No accounts yet. Add one to start tracking balances.</p>}
 
       {assetAccounts.length > 0 && (
         <>
-          <div className="bg-surface border border-border rounded-lg p-4 sm:p-6 mb-8">
-            <div className="flex flex-wrap items-baseline justify-between gap-2 mb-1">
-              <h2 className="text-base font-semibold text-ink">Total Balance</h2>
-              <span className={`money text-2xl font-bold ${totalBalance < 0 ? "text-alert" : "text-ledger-dark"}`}>
-                {formatCurrency(totalBalance)}
-              </span>
+          <section aria-label="Total assets" className="bg-surface border border-border rounded-xl p-4 sm:p-5 mb-6">
+            <div className="text-xs text-ink-muted uppercase tracking-wide">Total assets</div>
+            <div className={`money font-display text-3xl sm:text-4xl font-bold mt-1 ${totalBalance < 0 ? "text-alert" : "text-ink"}`}>
+              {formatCurrency(totalBalance)}
             </div>
-            {unvalued.length > 0 && (
-              <p className="flex items-center gap-1 text-xs text-warning mb-1">
-                <AlertTriangle size={13} aria-hidden="true" />
-                {unvalued.length} account{unvalued.length === 1 ? "" : "s"} not valued ({unvalued.map((a) => a.name).join(", ")}) - not included above.
+            {totalChange != null && totalBalance !== priorTotal && (
+              <p className={`text-xs font-medium mt-1 ${totalBalance > priorTotal ? "text-ledger-dark" : "text-alert"}`}>
+                {totalBalance > priorTotal ? "▲ +" : "▼ -"}
+                {Math.abs(totalChange).toFixed(1)}% <span className="text-ink-muted font-normal">vs last month ·</span>{" "}
+                <span className="money">{formatCurrency(Math.abs(totalBalance - priorTotal))}</span>
               </p>
             )}
             {hasLiabilities && (
-              <p className="text-sm text-ink-muted mb-4">
+              <p className="text-xs text-ink-muted mt-1">
                 Net worth after{" "}
                 <Link to="/liabilities" className="text-ledger-dark hover:underline">
                   liabilities
@@ -243,23 +252,21 @@ export default function AccountsPage() {
                 : <span className="money font-semibold text-ink">{formatCurrency(totalBalance + liabilityTotal)}</span>
               </p>
             )}
-
-            <div className="grid grid-cols-1 md:grid-cols-[3fr_2fr] gap-6 mt-4">
-              <div className="min-w-0">
-                <h3 className="text-sm font-semibold mb-2 text-ink">Composition</h3>
-                <AssetCompositionChart accounts={assetAccounts} balanceEntries={balanceEntries} />
-              </div>
-              <div className="min-w-0">
-                <h3 className="text-sm font-semibold mb-2 text-ink">Allocation by Type</h3>
-                <AssetAllocationByTypeChart accounts={assetAccounts} accountTypes={accountTypes} balanceEntries={balanceEntries} />
-              </div>
+            {unvalued.length > 0 && (
+              <p className="flex items-start gap-1 text-xs text-warning mt-1">
+                <AlertTriangle size={13} className="mt-px shrink-0" aria-hidden="true" />
+                {unvalued.length} account{unvalued.length === 1 ? "" : "s"} not valued ({unvalued.map((a) => a.name).join(", ")}) - not included above.
+              </p>
+            )}
+            <div className="mt-4">
+              <LabelledStackBar label="Allocation by type" segments={groups.map((g) => ({ name: g.name, value: g.subtotal }))} />
             </div>
-          </div>
+          </section>
 
-          <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
-            <h2 className="text-lg font-semibold text-ink">Accounts</h2>
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+            <h2 className="text-sm font-semibold text-ink-muted uppercase tracking-wide">Accounts</h2>
             <label className="flex items-center gap-2 text-sm text-ink-muted">
-              Sort by
+              Sort
               <select
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value)}
@@ -279,75 +286,73 @@ export default function AccountsPage() {
               key={group.key}
               id={`assets-${group.key}`}
               title={group.name}
+              list
               collapsed={collapsed.includes(group.key)}
               onToggle={() => toggleGroup(group.key)}
               summary={
                 <>
-                  <span className="text-ink-muted">
-                    {group.count} account{group.count === 1 ? "" : "s"}
-                  </span>
+                  <span className="text-ink-muted">{group.count}</span>
                   {group.unvalued > 0 && <span className="text-warning">{group.unvalued} not valued</span>}
                   <span className="money font-semibold text-ink">{formatCurrency(group.subtotal)}</span>
-                  {totalBalance > 0 && (
-                    <span className="text-ink-muted">{Math.round((group.subtotal / totalBalance) * 100)}%</span>
-                  )}
                 </>
               }
             >
-              {sortRoots(group.roots, sortBy, { valueOf, staleDaysOf }).map((root) => {
-                const descendants = flattenDescendants(root);
-                return (
-                  <div key={root.id} className="flex flex-col">
-                    {renderAccountCard(root)}
-                    {descendants.length > 0 && (
-                      <div className="mt-2 bg-surface-sunken border border-border rounded-lg overflow-hidden">
-                        <div className="text-[10px] font-semibold text-ink-muted uppercase tracking-wide px-3 pt-2 pb-1">
-                          Holdings
-                        </div>
-                        {descendants.map(renderDescendantRow)}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+              {sortRoots(group.roots, sortBy, { valueOf, staleDaysOf }).flatMap((root) => [
+                renderRow(root),
+                ...flattenDescendants(root).map(({ account, depth }) => renderRow(account, depth)),
+              ])}
             </AccountGroup>
           ))}
 
           {(monthlyIncomeExpenseData.length > 0 || accountsWithGaps.length > 0) && (
-            <div id="history" className="bg-surface border border-border rounded-lg p-4 sm:p-6 mt-2 space-y-6 scroll-mt-20">
-              <h2 className="text-lg font-semibold text-ink">History</h2>
-              {monthlyIncomeExpenseData.length > 0 && (
-                <div>
-                  <h3 className="text-sm font-semibold mb-2 text-ink">Income vs Expense · all history</h3>
-                  <IncomeExpenseChart data={monthlyIncomeExpenseData} />
+            <section id="history" className="bg-surface border border-border rounded-xl mt-6 scroll-mt-20">
+              <h2>
+                <button
+                  type="button"
+                  onClick={() => setShowHistory((v) => !v)}
+                  aria-expanded={showHistory}
+                  aria-controls="assets-history-panel"
+                  className="w-full flex items-center justify-between gap-2 px-4 py-3 text-left text-sm font-semibold text-ink"
+                >
+                  History charts
+                  <ChevronDown size={16} aria-hidden="true" className={`text-ink-muted transition-transform ${showHistory ? "" : "-rotate-90"}`} />
+                </button>
+              </h2>
+              {showHistory && (
+                <div id="assets-history-panel" className="px-4 pb-4 space-y-6">
+                  {monthlyIncomeExpenseData.length > 0 && (
+                    <div>
+                      <h3 className="text-sm font-semibold mb-2 text-ink">Income vs Expense · all history</h3>
+                      <IncomeExpenseChart data={monthlyIncomeExpenseData} />
+                    </div>
+                  )}
+                  {accountsWithGaps.length > 0 && (
+                    <div>
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                        <h3 className="text-sm font-semibold text-ink">Implied Spend (reconciliation gaps)</h3>
+                        <select
+                          value={impliedAccountId}
+                          onChange={(e) => setImpliedAccountId(e.target.value)}
+                          aria-label="Account"
+                          className="border border-border rounded-md px-2 py-1 bg-surface text-ink text-sm"
+                        >
+                          <option value="all">All accounts</option>
+                          {accountsWithGaps.map((acc) => (
+                            <option key={acc.id} value={acc.id}>
+                              {acc.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <p className="text-xs text-ink-muted mb-2">
+                        Each bar is the gap between two consecutive reconciliations on one account, not a calendar month.
+                      </p>
+                      <ImpliedSpendChart data={impliedSpendRows} />
+                    </div>
+                  )}
                 </div>
               )}
-
-              {accountsWithGaps.length > 0 && (
-                <div>
-                  <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                    <h3 className="text-sm font-semibold text-ink">Implied Spend (reconciliation gaps)</h3>
-                    <select
-                      value={impliedAccountId}
-                      onChange={(e) => setImpliedAccountId(e.target.value)}
-                      aria-label="Account"
-                      className="border border-border rounded-md px-2 py-1 bg-surface text-ink text-sm"
-                    >
-                      <option value="all">All accounts</option>
-                      {accountsWithGaps.map((acc) => (
-                        <option key={acc.id} value={acc.id}>
-                          {acc.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <p className="text-xs text-ink-muted mb-2">
-                    Each bar is the gap between two consecutive reconciliations on one account, not a calendar month.
-                  </p>
-                  <ImpliedSpendChart data={impliedSpendRows} />
-                </div>
-              )}
-            </div>
+            </section>
           )}
         </>
       )}

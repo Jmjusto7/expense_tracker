@@ -2,17 +2,78 @@ import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Bell, ChevronRight, Plus, Wallet, Cloud } from "lucide-react";
 import { useExpenseContext } from "../context/ExpenseContext";
+import { useBucketsWithCategories } from "../hooks/useBucketsWithCategories";
 import { ALL_MONTHS } from "../utils/dateHelpers";
-import { getStatementInfo } from "../utils/balanceHelpers";
-import { getAttentionItems } from "../utils/attention";
+import { formatCurrency } from "../utils/formatCurrency";
+import { getAttentionItems, getUpcomingLiabilityEvents } from "../utils/attention";
 import { buildMonthlyIncomeExpense, findMonthRow } from "../utils/incomeExpenseHelpers";
+import { classifyTransactions, groupByEffectiveBucket } from "../utils/transactionClassification";
 import NetWorthHeroCard from "../components/NetWorthHeroCard";
 import MonthSummaryCard from "../components/MonthSummaryCard";
-import IncomeExpenseChart from "../components/IncomeExpenseChart";
-import QuickStatsPanel from "../components/QuickStatsPanel";
+import LabelledStackBar from "../components/LabelledStackBar";
 import AddTransactionModal from "../components/AddTransactionModal";
+import InstallBanner from "../components/InstallBanner";
 
-const NEXT_DUE_SOON_DAYS = 7;
+const COMING_UP_DAYS = 14;
+const EVENT_BADGES = {
+  overdue: "bg-alert-soft text-alert",
+  paid: "bg-ledger-soft text-ledger-dark",
+};
+
+function StatTile({ label, value, sub, title }) {
+  return (
+    <div className="bg-surface border border-border rounded-xl p-3 min-w-0" title={title}>
+      <div className="text-[10px] sm:text-[11px] text-ink-muted uppercase tracking-wide leading-tight">{label}</div>
+      <div className="text-base sm:text-xl font-bold text-ink leading-tight mt-1 break-words">{value}</div>
+      {sub && <div className="text-[11px] text-ink-muted mt-0.5 truncate">{sub}</div>}
+    </div>
+  );
+}
+
+function ComingUp({ events }) {
+  return (
+    <section aria-labelledby="coming-up-title" className="bg-surface border border-border rounded-xl p-4 h-full">
+      <div className="flex items-baseline justify-between gap-2 mb-2">
+        <h2 id="coming-up-title" className="text-sm font-semibold text-ink">
+          Coming up
+        </h2>
+        <span className="text-xs text-ink-muted">Next {COMING_UP_DAYS} days</span>
+      </div>
+      {events.length === 0 ? (
+        <p className="text-sm text-ink-muted py-2">No card payments or statement closes coming up.</p>
+      ) : (
+        <ul className="divide-y divide-border">
+          {events.map((e) => {
+            const d = new Date(e.date);
+            return (
+              <li key={e.key}>
+                <Link to={`/liabilities/${e.account.id}`} className="flex items-center gap-3 py-2 hover:bg-surface-sunken -mx-2 px-2 rounded-lg">
+                  <span className="w-11 shrink-0 text-center border border-border rounded-lg py-0.5" aria-hidden="true">
+                    <span className="block text-base font-bold leading-tight text-ink">{d.getDate()}</span>
+                    <span className="block text-[10px] uppercase text-ink-muted">{d.toLocaleDateString(undefined, { month: "short" })}</span>
+                  </span>
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-sm font-medium text-ink truncate">{e.account.name}</span>
+                    <span className="block text-xs text-ink-muted">
+                      <span className="sr-only">{d.toLocaleDateString(undefined, { month: "long", day: "numeric" })}: </span>
+                      {e.kind === "due" ? "Payment due" : e.status === "overdue" ? "Statement closed - log it" : "Statement closes"}
+                    </span>
+                  </span>
+                  {e.kind === "due" && e.status !== "upcoming" && (
+                    <span className={`text-[11px] font-semibold rounded-full px-2 py-0.5 ${EVENT_BADGES[e.status]}`}>
+                      {e.status === "overdue" ? "Overdue" : "Paid ✓"}
+                    </span>
+                  )}
+                  {e.amount != null && <span className="money text-sm font-semibold text-ink shrink-0">{formatCurrency(e.amount)}</span>}
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
 
 function LoadingState() {
   return (
@@ -147,6 +208,7 @@ function AttentionPanel({ items }) {
 
 const SummaryPage = () => {
   const { isLoaded, allTransactions, accounts, balanceEntries } = useExpenseContext();
+  const buckets = useBucketsWithCategories();
 
   const today = useMemo(() => new Date(), []);
   const currentMonthName = ALL_MONTHS[today.getMonth()];
@@ -159,13 +221,6 @@ const SummaryPage = () => {
   );
 
   const monthlyRows = useMemo(() => buildMonthlyIncomeExpense(allTransactions, balanceEntries), [allTransactions, balanceEntries]);
-
-  // Trailing 12 calendar months, including this one.
-  const last12MonthsRows = useMemo(() => {
-    const endTs = new Date(currentYear, today.getMonth(), 1).getTime();
-    const startTs = new Date(currentYear, today.getMonth() - 11, 1).getTime();
-    return monthlyRows.filter((r) => r.date.getTime() >= startTs && r.date.getTime() <= endTs);
-  }, [monthlyRows, currentYear, today]);
 
   const thisMonthRow = findMonthRow(monthlyRows, currentYear, today.getMonth());
   const lastMonthRow = findMonthRow(monthlyRows, lastMonthDate.getFullYear(), lastMonthDate.getMonth());
@@ -202,47 +257,13 @@ const SummaryPage = () => {
     return { name, amount, pct: totalExpense ? (amount / totalExpense) * 100 : 0 };
   }, [thisMonthTx]);
 
-  // Projected month total from the daily average so far, vs last month's actual.
-  const daysElapsedThisMonth = today.getDate();
-  const daysInThisMonth = new Date(currentYear, today.getMonth() + 1, 0).getDate();
+  const whereItWent = useMemo(
+    () =>
+      [...groupByEffectiveBucket(classifyTransactions(thisMonthTx, buckets)).values()].map((g) => ({ name: g.bucketLabel, value: g.total })),
+    [thisMonthTx, buckets]
+  );
 
-  const spendPace = useMemo(() => {
-    if (daysElapsedThisMonth <= 0) return null;
-    const projectedMonthTotal = (thisMonthExpense / daysElapsedThisMonth) * daysInThisMonth;
-    const paceVsLastMonthPct = lastMonthRow?.expense ? ((projectedMonthTotal - lastMonthRow.expense) / lastMonthRow.expense) * 100 : null;
-    return { projectedMonthTotal, paceVsLastMonthPct };
-  }, [thisMonthExpense, daysElapsedThisMonth, daysInThisMonth, lastMonthRow]);
-
-  // Signed sum of what's still due on statements whose due date is this month.
-  const liabilitiesDueThisMonth = useMemo(() => {
-    return accounts
-      .filter((a) => a.isLiability)
-      .reduce((sum, a) => {
-        const info = getStatementInfo(balanceEntries, a, today);
-        if (!info.dueDate) return sum;
-        const isDueThisMonth = info.dueDate.getFullYear() === currentYear && info.dueDate.getMonth() === today.getMonth();
-        return isDueThisMonth ? sum + (info.remainingDue ?? 0) : sum;
-      }, 0);
-  }, [accounts, balanceEntries, currentYear, today]);
-
-  // Soonest unpaid due date across all liabilities, any month.
-  const nextPaymentDue = useMemo(() => {
-    const candidates = accounts
-      .filter((a) => a.isLiability)
-      .map((a) => ({ account: a, info: getStatementInfo(balanceEntries, a, today) }))
-      .filter(({ info }) => info.dueDate && (info.remainingDue ?? 0) > 0)
-      .sort((a, b) => a.info.dueDate - b.info.dueDate);
-
-    if (candidates.length === 0) return null;
-
-    const { account, info } = candidates[0];
-    const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const dueMidnight = new Date(info.dueDate.getFullYear(), info.dueDate.getMonth(), info.dueDate.getDate());
-    const daysUntilDue = Math.round((dueMidnight - todayMidnight) / (1000 * 60 * 60 * 24));
-    const status = daysUntilDue < 0 ? "overdue" : daysUntilDue <= NEXT_DUE_SOON_DAYS ? "dueSoon" : "upcoming";
-
-    return { accountId: account.id, accountName: account.name, amount: info.remainingDue, dueDate: info.dueDate, daysUntilDue, status };
-  }, [accounts, balanceEntries, today]);
+  const comingUp = useMemo(() => getUpcomingLiabilityEvents(accounts, balanceEntries, today, COMING_UP_DAYS), [accounts, balanceEntries, today]);
 
   const attentionItems = useMemo(() => getAttentionItems(accounts, balanceEntries, today), [accounts, balanceEntries, today]);
 
@@ -250,65 +271,81 @@ const SummaryPage = () => {
   if (accounts.length === 0 && allTransactions.length === 0) return <Onboarding />;
 
   const cardLink = "block h-full rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ledger hover:shadow-sm";
+  const monthPath = `/expenses/${currentYear}/${currentMonthName}`;
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8 flex flex-col gap-4">
       <h1 className="sr-only">Home</h1>
       <AttentionPanel items={attentionItems} />
+      <InstallBanner />
 
-      <NetWorthHeroCard accounts={accounts} balanceEntries={balanceEntries} />
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="lg:col-span-2 min-w-0">
+          <NetWorthHeroCard accounts={accounts} balanceEntries={balanceEntries} />
+        </div>
 
-      <div className="grid grid-cols-1 min-[420px]:grid-cols-2 gap-4">
-        <Link to="/assets#history" className={cardLink} aria-label="This month's income - see income history">
-          <MonthSummaryCard
-            label="This Month's Income"
-            value={thisMonthIncome}
-            changeAmount={incomeChangeAmount}
-            changePct={incomeChangePct}
-            accent="ledger"
-            compact
+        <div className="grid grid-cols-1 min-[420px]:grid-cols-2 lg:grid-cols-1 gap-4">
+          <Link to="/assets#history" className={cardLink} aria-label="This month's income - see income history">
+            <MonthSummaryCard
+              label="This Month's Income"
+              value={thisMonthIncome}
+              changeAmount={incomeChangeAmount}
+              changePct={incomeChangePct}
+              accent="ledger"
+              compact
+            />
+          </Link>
+          <Link to={monthPath} className={cardLink} aria-label={`This month's expenses - open ${currentMonthName} ${currentYear}`}>
+            <MonthSummaryCard
+              label="This Month's Expenses"
+              value={thisMonthExpense}
+              changeAmount={expenseChangeAmount}
+              changePct={expenseChangePct}
+              accent="alert"
+              compact
+            />
+          </Link>
+        </div>
+
+        <section aria-label={`${currentMonthName} at a glance`} className="lg:col-span-2 grid grid-cols-3 gap-2 sm:gap-4">
+          <StatTile
+            label="Savings rate"
+            value={savingsRatePct === null ? "—" : `${savingsRatePct.toFixed(0)}%`}
+            sub="of income"
           />
-        </Link>
-        <Link
-          to={`/expenses/${currentYear}/${currentMonthName}`}
-          className={cardLink}
-          aria-label={`This month's expenses - open ${currentMonthName} ${currentYear}`}
-        >
-          <MonthSummaryCard
-            label="This Month's Expenses"
-            value={thisMonthExpense}
-            changeAmount={expenseChangeAmount}
-            changePct={expenseChangePct}
-            accent="alert"
-            compact
+          <StatTile
+            label="Largest expense"
+            value={<span className="money">{largestExpense ? formatCurrency(largestExpense.amount) : "—"}</span>}
+            sub={largestExpense?.category}
+            title={largestExpense ? `${largestExpense.category} on ${largestExpense.date.toLocaleDateString()}` : undefined}
           />
-        </Link>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-4">
-        <section className="bg-surface border border-border rounded-xl p-4 min-w-0">
-          <div className="flex items-baseline justify-between gap-2 mb-2">
-            <h2 className="text-sm font-semibold text-ink">Income vs Expenses</h2>
-            <span className="text-xs text-ink-muted">Last 12 months</span>
-          </div>
-          <IncomeExpenseChart data={last12MonthsRows} />
-        </section>
-        <section className="min-w-0 flex flex-col">
-          <div className="flex items-baseline justify-between gap-2 mb-2 px-1">
-            <h2 className="text-sm font-semibold text-ink">Quick Stats</h2>
-            <span className="text-xs text-ink-muted">
-              {currentMonthName} {currentYear}
-            </span>
-          </div>
-          <QuickStatsPanel
-            savingsRatePct={savingsRatePct}
-            largestExpense={largestExpense}
-            topCategory={topCategory}
-            spendPace={spendPace}
-            liabilitiesDueThisMonth={liabilitiesDueThisMonth}
-            nextPaymentDue={nextPaymentDue}
+          <StatTile
+            label="Top category"
+            value={<span className="block truncate">{topCategory?.name || "—"}</span>}
+            sub={topCategory ? `${topCategory.pct.toFixed(0)}% · ${formatCurrency(topCategory.amount)}` : undefined}
+            title={topCategory?.name}
           />
         </section>
+
+        <section aria-labelledby="where-title" className="bg-surface border border-border rounded-xl p-4 min-w-0">
+          <div className="flex items-baseline justify-between gap-2 mb-3">
+            <h2 id="where-title" className="text-sm font-semibold text-ink">
+              Where it went
+            </h2>
+            <Link to={monthPath} className="text-xs text-ledger-dark hover:underline">
+              {currentMonthName}
+            </Link>
+          </div>
+          {whereItWent.some((s) => s.value > 0) ? (
+            <LabelledStackBar label={`${currentMonthName} spending by bucket`} segments={whereItWent} />
+          ) : (
+            <p className="text-sm text-ink-muted">Nothing spent yet this month.</p>
+          )}
+        </section>
+
+        <div className="lg:col-span-3">
+          <ComingUp events={comingUp} />
+        </div>
       </div>
     </div>
   );

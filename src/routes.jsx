@@ -4,7 +4,7 @@ import YearExpensesPage from "./pages/YearExpensesPage";
 import MonthExpensesPage from "./pages/MonthExpensesPage";
 import TravelsPage from "./pages/TravelsPage";
 import TravelDetailPage from "./pages/TravelDetailPage";
-import ExpensesPage from "./pages/ExpensesPage";
+import ExpensesPage, { CurrentMonthRedirect } from "./pages/ExpensesPage";
 import SettingsPage from "./pages/SettingsPage";
 import AccountsPage from "./pages/AccountsPage";
 import AccountDetailPage from "./pages/AccountDetailPage";
@@ -21,9 +21,11 @@ export default function AppRoutes() {
 
       {/* Settings page */}
       <Route path="/settings" element={<SettingsPage />} />
+      <Route path="/settings/:section" element={<SettingsPage />} />
 
-      {/* Year list page */}
-      <Route path="/expenses" element={<YearExpensesPage />} />
+      {/* /expenses opens the current month; analytics + years live at /expenses/overview */}
+      <Route path="/expenses" element={<CurrentMonthRedirect />} />
+      <Route path="/expenses/overview" element={<YearExpensesPage />} />
 
       {/* Month list for a specific year */}
       <Route
@@ -35,15 +37,8 @@ export default function AppRoutes() {
         }
       />
 
-      {/* Transactions for a specific month */}
-      <Route
-        path="/expenses/:year/:month"
-        element={
-          <HierarchyGuard>
-            <ExpensesPage />
-          </HierarchyGuard>
-        }
-      />
+      {/* Month statement (list or ?view=calendar); empty months render too */}
+      <Route path="/expenses/:year/:month" element={<ExpensesPage />} />
 
       {/* Year list page */}
       <Route path="/travels" element={<TravelsPage />} />

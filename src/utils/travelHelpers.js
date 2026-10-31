@@ -70,3 +70,45 @@ export function findTravelForDate(travels, date) {
   matches.sort((a, b) => dayTs(a.endDate) - dayTs(a.startDate) - (dayTs(b.endDate) - dayTs(b.startDate)));
   return matches[0] ?? null;
 }
+
+const MAX_TRIP_DAYS = 400;
+
+// Inclusive number of calendar days a trip covers (a same-day trip is 1).
+export const tripDays = (travel) =>
+  travel?.startDate && travel?.endDate ? Math.max(1, Math.round((dayTs(travel.endDate) - dayTs(travel.startDate)) / 86400000) + 1) : 0;
+
+// "current" (today within the dates, with dayNumber), "upcoming" or "past".
+export function tripStatus(travel, today = new Date()) {
+  const t = dayTs(today);
+  if (!travel?.startDate || !travel?.endDate) return { status: "past" };
+  if (t < dayTs(travel.startDate)) return { status: "upcoming", daysUntil: Math.round((dayTs(travel.startDate) - t) / 86400000) };
+  if (t <= dayTs(travel.endDate)) return { status: "current", dayNumber: Math.round((t - dayTs(travel.startDate)) / 86400000) + 1 };
+  return { status: "past" };
+}
+
+// Travel days per calendar month: "2026-9" (0-based month) -> { days: Map(dayOfMonth -> [travel]), travels: Set }.
+// Overlapping trips share a day; a day counts once in the month total.
+export function buildTravelCalendar(travels) {
+  const months = new Map();
+  for (const travel of travels) {
+    if (!travel.startDate || !travel.endDate) continue;
+    const start = new Date(dayTs(travel.startDate));
+    const endTs = dayTs(travel.endDate);
+    for (let d = new Date(start), n = 0; d.getTime() <= endTs && n < MAX_TRIP_DAYS; d.setDate(d.getDate() + 1), n++) {
+      const key = `${d.getFullYear()}-${d.getMonth()}`;
+      if (!months.has(key)) months.set(key, { days: new Map(), travels: new Set() });
+      const month = months.get(key);
+      if (!month.days.has(d.getDate())) month.days.set(d.getDate(), []);
+      month.days.get(d.getDate()).push(travel);
+      month.travels.add(travel);
+    }
+  }
+  return months;
+}
+
+// Years to show: every year a trip touches, plus the current year.
+export function travelCalendarYears(calendar, today = new Date()) {
+  const years = new Set([today.getFullYear()]);
+  for (const key of calendar.keys()) years.add(Number(key.split("-")[0]));
+  return [...years].sort((a, b) => b - a);
+}

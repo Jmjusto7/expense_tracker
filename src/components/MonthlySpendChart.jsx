@@ -1,4 +1,4 @@
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from "recharts";
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine } from "recharts";
 import { formatMonthYear } from "../utils/dateHelpers";
 import { formatCurrency } from "../utils/formatCurrency";
 import { compactCurrency, Y_AXIS_WIDTH } from "../utils/chartFormat";
@@ -11,16 +11,10 @@ const MonthlySpendChart = ({ data }) => {
   const average =
     sortedData.reduce((sum, item) => sum + item.total, 0) / sortedData.length;
 
-  // Add "average" field to each row
-  const chartData = sortedData.map((item) => ({
-    ...item,
-    average
-  }));
-
   return (
     <div className="money w-full h-64">
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+        <LineChart data={sortedData} margin={{ top: 18, right: 30, left: 0, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#dbe3db" />
           <XAxis
             dataKey="date"
@@ -33,12 +27,10 @@ const MonthlySpendChart = ({ data }) => {
           <YAxis stroke="#6b7570" tick={{ fontSize: 12 }} width={Y_AXIS_WIDTH} tickFormatter={compactCurrency} />
           <Tooltip
             labelFormatter={(label) => formatMonthYear(label)}
-            formatter={(value, _name, item) => [formatCurrency(value), item.dataKey === "average" ? "Average" : "Total"]}
+            formatter={(value) => [formatCurrency(value), "Monthly total"]}
             contentStyle={{ fontFamily: "var(--font-mono)", fontSize: 13 }}
           />
-          <Legend wrapperStyle={{ fontSize: 12 }} />
 
-          {/* Main line */}
           <Line
             type="monotone"
             dataKey="total"
@@ -48,15 +40,13 @@ const MonthlySpendChart = ({ data }) => {
             name="Monthly Total"
           />
 
-          {/* Average line */}
-          <Line
-            type="monotone"
-            dataKey="average"
+          {/* Labelled in place instead of a colour-matched legend entry. */}
+          <ReferenceLine
+            y={average}
             stroke="#b8622e"
             strokeWidth={2}
             strokeDasharray="5 5"
-            dot={false}
-            name="Average"
+            label={{ value: `Avg ${compactCurrency(average)}`, position: "insideTopRight", fontSize: 11, fill: "#944d22" }}
           />
         </LineChart>
       </ResponsiveContainer>

@@ -3,6 +3,7 @@ import { useState } from "react";
 import { CreditCard, Scale, ArrowLeftRight, CalendarCheck, Trash2, ChevronDown } from "lucide-react";
 import { useExpenseContext } from "../context/ExpenseContext";
 import { formatCurrency } from "../utils/formatCurrency";
+import HideBalancesToggle from "../components/HideBalancesToggle";
 import { formatDate, ALL_MONTHS } from "../utils/dateHelpers";
 import {
   getStatementInfo,
@@ -156,13 +157,14 @@ export default function LiabilityDetailPage() {
   };
 
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8">
+    <div data-balances className="max-w-4xl mx-auto px-4 sm:px-6 py-8">
       <Breadcrumbs items={[{ label: "Liabilities", to: "/liabilities" }, { label: account.name }]} />
 
       <div className="mt-3 mb-6">
         <div className="flex items-center gap-2">
           <CreditCard size={18} className="text-alert" />
           <h1 className="font-display text-2xl text-ink">{account.name}</h1>
+          <HideBalancesToggle className="ml-auto" />
         </div>
 
         <div className={`money text-2xl font-bold mt-2 ${isCredit ? "text-ledger-dark" : "text-alert"}`}>
@@ -199,7 +201,7 @@ export default function LiabilityDetailPage() {
         </button>
       </div>
 
-      <div className="grid sm:grid-cols-2 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
         <StatCard
           label="Statement Balance"
           value={info.statementBalance == null ? "—" : formatCurrency(Math.abs(info.statementBalance))}
@@ -225,6 +227,7 @@ export default function LiabilityDetailPage() {
                 : `of ${formatCurrency(account.creditLimit)} limit`
           }
           accent={account.creditLimit != null && info.availableCredit < 0 ? "alert" : "ledger"}
+          sensitiveSublabel
         />
       </div>
 
@@ -261,7 +264,7 @@ export default function LiabilityDetailPage() {
                   </span>
                 </div>
                 <div className="flex items-center justify-between mt-1 text-[11px] text-ink-muted">
-                  <span>
+                  <span className="sensitive">
                     Opening: {cycle.openingBalance == null ? "—" : formatCurrency(Math.abs(cycle.openingBalance))}
                     {" → "}
                     Closing: {cycle.closingBalance == null ? "—" : formatCurrency(Math.abs(cycle.closingBalance))}

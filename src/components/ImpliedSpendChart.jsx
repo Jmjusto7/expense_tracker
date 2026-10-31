@@ -1,12 +1,13 @@
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Cell, Legend } from "recharts";
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Cell, Legend, LabelList, ReferenceLine } from "recharts";
 import { formatCurrency } from "../utils/formatCurrency";
 import { compactCurrency, Y_AXIS_WIDTH } from "../utils/chartFormat";
+import { hatchDefs } from "../utils/chartPatterns";
 
 const MIN_BAR_SLOT_PX = 56;
 const shortLabel = (label) => (label.length > 14 ? `${label.slice(0, 13)}…` : label);
 const LEGEND = [
-  { value: "Implied spend", type: "square", color: "#a1423b" },
-  { value: "Unaccounted inflow", type: "square", color: "#1f6f5c" },
+  { value: "Implied spend (above 0)", type: "square", color: "#a1423b" },
+  { value: "Unaccounted inflow (below 0, hatched)", type: "square", color: "url(#inflowHatch)" },
 ];
 
 // Scrolls sideways instead of squeezing labels once there are many periods.
@@ -15,7 +16,8 @@ export default function ImpliedSpendChart({ data }) {
     <div className="overflow-x-auto">
       <div className="money h-64" style={{ minWidth: Math.max(data.length * MIN_BAR_SLOT_PX, 320), width: "100%" }}>
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} margin={{ top: 10, right: 30, left: 0, bottom: 10 }}>
+          <BarChart data={data} margin={{ top: 20, right: 30, left: 0, bottom: 10 }}>
+            {hatchDefs("inflowHatch", "#1f6f5c")}
             <CartesianGrid strokeDasharray="3 3" stroke="#dbe3db" />
             <XAxis
               dataKey="label"
@@ -36,10 +38,22 @@ export default function ImpliedSpendChart({ data }) {
               contentStyle={{ fontFamily: "var(--font-mono)", fontSize: 13 }}
             />
             <Legend payload={LEGEND} wrapperStyle={{ fontSize: 12 }} />
+            <ReferenceLine y={0} stroke="#6b7570" />
             <Bar dataKey="impliedSpend" radius={[3, 3, 0, 0]}>
-              {data.map((row, i) => (
-                <Cell key={i} fill={row.impliedSpend >= 0 ? "#a1423b" : "#1f6f5c"} />
-              ))}
+              {data.map((row, i) =>
+                row.impliedSpend >= 0 ? (
+                  <Cell key={i} fill="#a1423b" />
+                ) : (
+                  <Cell key={i} fill="url(#inflowHatch)" stroke="#1f6f5c" />
+                )
+              )}
+              <LabelList
+                dataKey="impliedSpend"
+                position="top"
+                formatter={(v) => `${v < 0 ? "+" : ""}${compactCurrency(Math.abs(v))}`}
+                fontSize={10}
+                fill="#1c2321"
+              />
             </Bar>
           </BarChart>
         </ResponsiveContainer>

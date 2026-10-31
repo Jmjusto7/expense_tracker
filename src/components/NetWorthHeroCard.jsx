@@ -5,6 +5,7 @@ import { ArrowUpRight, ArrowDownRight, Minus, AlertTriangle } from "lucide-react
 import { formatCurrency, formatCurrencyPrecise } from "../utils/formatCurrency";
 import { formatMonthYear } from "../utils/dateHelpers";
 import { getTotalBalance, buildMonthlyNetWorth, getUnvaluedAccounts } from "../utils/balanceHelpers";
+import HideBalancesToggle from "./HideBalancesToggle";
 
 const PERIOD_OPTIONS = [
   { label: "Past 3 months", value: 3 },
@@ -36,9 +37,12 @@ export default function NetWorthHeroCard({ accounts, balanceEntries }) {
   const ChangeIcon = changeAmount > 0 ? ArrowUpRight : changeAmount < 0 ? ArrowDownRight : Minus;
 
   return (
-    <section className="bg-surface border border-border rounded-xl p-4 sm:p-6 flex flex-col md:flex-row gap-4 md:gap-8">
+    <section data-balances className="bg-surface border border-border rounded-xl p-4 sm:p-6 flex flex-col md:flex-row gap-4 md:gap-8">
       <div className="flex flex-col justify-center md:shrink-0 md:max-w-[45%]">
-        <h2 className="text-xs text-ink-muted uppercase tracking-wide mb-2">Net Worth</h2>
+        <div className="flex items-center gap-1 mb-2">
+          <h2 className="text-xs text-ink-muted uppercase tracking-wide">Net Worth</h2>
+          <HideBalancesToggle className="-my-2 p-1.5" />
+        </div>
         <div className="money font-display text-4xl sm:text-5xl font-bold text-ink leading-none mb-3 break-all">
           {formatCurrency(currentNetWorth)}
         </div>
