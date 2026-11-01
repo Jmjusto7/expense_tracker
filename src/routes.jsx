@@ -1,6 +1,7 @@
 import { Routes, Route } from "react-router-dom";
 import SummaryPage from "./pages/SummaryPage";
-import YearExpensesPage from "./pages/YearExpensesPage";
+import ExpenseOverviewPage from "./pages/ExpenseOverviewPage";
+import ExpenseYearsPage from "./pages/ExpenseYearsPage";
 import MonthExpensesPage from "./pages/MonthExpensesPage";
 import TravelsPage from "./pages/TravelsPage";
 import TravelDetailPage from "./pages/TravelDetailPage";
@@ -23,9 +24,10 @@ export default function AppRoutes() {
       <Route path="/settings" element={<SettingsPage />} />
       <Route path="/settings/:section" element={<SettingsPage />} />
 
-      {/* /expenses opens the current month; analytics + years live at /expenses/overview */}
+      {/* /expenses opens the current month; analytics at /expenses/overview, year cards at /expenses/years */}
       <Route path="/expenses" element={<CurrentMonthRedirect />} />
-      <Route path="/expenses/overview" element={<YearExpensesPage />} />
+      <Route path="/expenses/overview" element={<ExpenseOverviewPage />} />
+      <Route path="/expenses/years" element={<ExpenseYearsPage />} />
 
       {/* Month list for a specific year */}
       <Route

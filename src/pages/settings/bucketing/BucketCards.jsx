@@ -108,7 +108,7 @@ function MoveDialog({ category, columns, onClose, onMove }) {
 }
 
 // Phone layout: one card per bucket with its categories as chips.
-export default function BucketCards({ columns, query, onMove, onRename, onRemove, metaFor }) {
+export default function BucketCards({ columns, query, onMove, onRename, onIcon, onRemove, metaFor }) {
     const [addingTo, setAddingTo] = useState(null);
     const [moving, setMoving] = useState(null);
     const q = query.trim().toLowerCase();
@@ -142,9 +142,9 @@ export default function BucketCards({ columns, query, onMove, onRename, onRemove
             {buckets.map((bucket) => {
                 const shown = bucket.categories.filter(match);
                 return (
-                    <section key={bucket.id} aria-label={bucket.name} className="bg-surface border border-border rounded-xl p-3">
+                    <section key={bucket.id} aria-label={bucket.name} className="bg-surface border border-border rounded-xl shadow-card p-3">
                         <div className="flex mb-2">
-                            <BucketTitle bucket={bucket} meta={metaFor(bucket)} onRename={onRename} onRemove={onRemove} />
+                            <BucketTitle bucket={bucket} meta={metaFor(bucket)} onRename={onRename} onIcon={onIcon} onRemove={onRemove} />
                         </div>
                         <div className="flex flex-wrap gap-1.5">
                             {shown.map((cat) => (

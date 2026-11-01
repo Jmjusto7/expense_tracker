@@ -1,5 +1,5 @@
 import { Link, Navigate, NavLink, useParams } from "react-router-dom";
-import { ChevronLeft, ChevronRight, Shapes, Landmark, RefreshCw, MonitorDown, Database } from "lucide-react";
+import { ChevronLeft, ChevronRight, Shapes, Landmark, RefreshCw, MonitorDown, Database, Lightbulb } from "lucide-react";
 import { useExpenseContext } from "../context/ExpenseContext";
 import { useSync } from "../context/SyncContext";
 import { SYNC_STATUS_LABELS } from "../sync/status";
@@ -11,6 +11,7 @@ import AccountTypes from "./settings/AccountTypes";
 import ClearDBTab from "./settings/ClearDB";
 import SyncTab from "./settings/Sync";
 import InstallAppTab from "./settings/InstallApp";
+import TipsTab from "./settings/Tips";
 
 const INSTALL_LABELS = { installed: "Installed on this device", available: "Ready to install" };
 
@@ -49,6 +50,7 @@ function useSections() {
       Component: InstallAppTab,
     },
     { id: "data", title: "Data", desc: "Clear everything on this device", icon: Database, Component: ClearDBTab },
+    { id: "tips", title: "Tips", desc: "Replay the guided tips for each screen", icon: Lightbulb, Component: TipsTab },
   ];
 }
 
@@ -120,7 +122,7 @@ const SettingsPage = () => {
   // Desktop: the same list as a sidebar, with the chosen section beside it.
   const { Component } = active;
   return (
-    <div className="max-w-6xl mx-auto px-6 py-8">
+    <div className="page-shell">
       <h1 className="font-display text-2xl text-ink mb-6">Settings</h1>
       <div className="flex gap-6 items-start">
         <nav aria-label="Settings sections" className="w-64 shrink-0 flex flex-col gap-2 sticky top-20">
@@ -128,7 +130,7 @@ const SettingsPage = () => {
             <SectionLink key={s.id} section={s} compact />
           ))}
         </nav>
-        <section aria-labelledby="settings-section-title" className="flex-1 min-w-0 bg-surface border border-border rounded-xl p-6">
+        <section aria-labelledby="settings-section-title" className="flex-1 min-w-0 bg-surface border border-border rounded-xl shadow-card p-6">
           <h2 id="settings-section-title" className="text-lg font-semibold text-ink mb-4">
             {active.title}
           </h2>

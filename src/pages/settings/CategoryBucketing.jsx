@@ -13,7 +13,7 @@ const inputClass =
 
 // Each category belongs to at most one bucket. Board (drag & drop) on wide screens, cards on phones.
 const CategoryBucketing = () => {
-  const { addBucket, renameBucket, removeBucket, assignToBucket, cleanBucketAssignments, categories = [], allTransactions = [] } =
+  const { addBucket, renameBucket, setBucketIcon, removeBucket, assignToBucket, cleanBucketAssignments, categories = [], allTransactions = [] } =
     useExpenseContext();
   const { buckets, loaded } = useBucketsWithCategoriesState();
   const wide = useMediaQuery("(min-width: 768px)");
@@ -74,7 +74,9 @@ const CategoryBucketing = () => {
 
   return (
     <div>
-      <p className="text-sm text-ink-muted mb-4">Buckets group categories for analytics. Each category can be in one bucket.</p>
+      <p className="text-sm text-ink-muted mb-4">
+        Buckets group categories for analytics. Each category can be in one bucket. Tap a bucket's icon to pick an emoji - it shows on that bucket's expenses.
+      </p>
 
       <div className="flex flex-col sm:flex-row gap-2 mb-4">
         <form className="flex gap-2 flex-1" onSubmit={handleAddBucket}>
@@ -115,6 +117,7 @@ const CategoryBucketing = () => {
           query={query}
           onMove={move}
           onRename={renameBucket}
+          onIcon={setBucketIcon}
           onRemove={removeBucket}
           metaFor={metaFor}
         />

@@ -102,7 +102,7 @@ export default function TravelCalendar({ travels }) {
 
     return (
         <div>
-            <section aria-labelledby="travel-overview-title" className="bg-surface border border-border rounded-lg p-3 sm:p-4 mb-6">
+            <section aria-labelledby="travel-overview-title" className="bg-surface border border-border rounded-lg shadow-card p-3 sm:p-4 mb-6">
                 <div className="flex flex-wrap items-baseline justify-between gap-2 mb-2">
                     <h2 id="travel-overview-title" className="text-sm font-semibold text-ink">
                         Months travelled

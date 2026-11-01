@@ -1,13 +1,14 @@
-import { colorForKey } from "../utils/chartFormat";
+import { colorsForKeys } from "../utils/chartFormat";
 
-// A grid of clickable amount/percent cards, used for drill-down analytics
-// (ExpenseAnalytics's bucket/category filter on the Expenses tab,
-// TravelDetailPage's bucket/category drill-down). Each item is
+// A grid of clickable amount/percent cards, used for TravelDetailPage's
+// bucket/category drill-down. Each item is
 // {key, label, amount, percent, disabled?}. The swatch matches the item's
 // pie slice colour, so the grid doubles as the chart legend.
 // accent picks "ledger" or "travel" styling to match the page it's on.
 export default function BreakdownGrid({ items, activeKeys = [], onItemClick, accent = "ledger" }) {
   const isActive = (item) => activeKeys.includes(item.key);
+  // Same name set as the pie, so swatches match its colours.
+  const colorFor = colorsForKeys(items.map((i) => i.label));
 
   const activeBg = accent === "travel" ? "bg-travel border-travel" : "bg-ledger border-ledger";
   const idleBg =
@@ -36,7 +37,7 @@ export default function BreakdownGrid({ items, activeKeys = [], onItemClick, acc
             <span className={`flex items-start gap-1.5 font-semibold text-sm break-words ${active ? "text-white" : "text-ink"}`}>
               <span
                 className="mt-1 h-2.5 w-2.5 rounded-sm shrink-0 ring-1 ring-white/60"
-                style={{ backgroundColor: colorForKey(item.label) }}
+                style={{ backgroundColor: colorFor(item.label) }}
                 aria-hidden="true"
               />
               <span className="min-w-0">{item.label}</span>

@@ -5,7 +5,9 @@
 // feature). Was previously duplicated with slightly different regexes in
 // AddTransactionModal and EditTransactionModal - now a single source of truth.
 // Commas always separate amounts, so "1,000" is rejected rather than read as 1 + 0.
+// Zero is valid (something free / paid by someone else), as are parts that net to zero.
 const AMOUNT_TOKEN = /^-?(\d+(\.\d+)?|\.\d+)$/;
+const THOUSANDS_GROUP = /^000$/;
 
 const invalid = (error) => ({ total: NaN, breakdown: [], error });
 
@@ -19,19 +21,16 @@ export const parseAmountExpression = (expr) => {
   const badToken = tokens.find((t) => !AMOUNT_TOKEN.test(t));
   if (badToken !== undefined) return invalid(`"${badToken}" isn't a valid number.`);
 
-  const breakdown = tokens.map(Number);
-
-  const zeroIdx = breakdown.findIndex((v) => v === 0);
-  if (zeroIdx !== -1) {
-    if (zeroIdx === 0) return invalid("Amounts can't be zero.");
-    let end = zeroIdx;
-    while (end + 1 < tokens.length && breakdown[end + 1] === 0) end++;
-    const suggestion = tokens.slice(zeroIdx - 1, end + 1).join("");
+  const groupIdx = tokens.findIndex((t, i) => i > 0 && THOUSANDS_GROUP.test(t));
+  if (groupIdx !== -1) {
+    let end = groupIdx;
+    while (end + 1 < tokens.length && THOUSANDS_GROUP.test(tokens[end + 1])) end++;
+    const suggestion = tokens.slice(groupIdx - 1, end + 1).join("");
     return invalid(`Did you mean ${suggestion}? Commas separate amounts.`);
   }
 
+  const breakdown = tokens.map(Number);
   const total = breakdown.reduce((a, b) => a + b, 0);
-  if (total === 0) return invalid("Amounts add up to zero.");
 
   return { total, breakdown, error: null };
 };

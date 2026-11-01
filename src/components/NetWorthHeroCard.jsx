@@ -13,7 +13,7 @@ const PERIOD_OPTIONS = [
   { label: "Past 12 months", value: 12 },
 ];
 
-export default function NetWorthHeroCard({ accounts, balanceEntries }) {
+export default function NetWorthHeroCard({ accounts, balanceEntries, className = "" }) {
   const [months, setMonths] = useState(12);
 
   const currentNetWorth = useMemo(() => getTotalBalance(accounts, balanceEntries), [accounts, balanceEntries]);
@@ -33,17 +33,20 @@ export default function NetWorthHeroCard({ accounts, balanceEntries }) {
 
   const trendData = useMemo(() => buildMonthlyNetWorth(accounts, balanceEntries, months), [accounts, balanceEntries, months]);
 
-  const changeColor = changeAmount > 0 ? "text-ledger-dark" : changeAmount < 0 ? "text-alert" : "text-ink-muted";
+  const changeColor = changeAmount < 0 ? "text-[#ffd4ce]" : "text-white";
   const ChangeIcon = changeAmount > 0 ? ArrowUpRight : changeAmount < 0 ? ArrowDownRight : Minus;
 
   return (
-    <section data-balances className="bg-surface border border-border rounded-xl p-4 sm:p-6 flex flex-col md:flex-row gap-4 md:gap-8">
-      <div className="flex flex-col justify-center md:shrink-0 md:max-w-[45%]">
+    <section
+      data-balances
+      className={`bg-surface border border-border rounded-xl shadow-card overflow-hidden flex flex-col md:flex-row ${className}`}
+    >
+      <div className="hero-ledger p-4 sm:p-6 flex flex-col justify-center md:shrink-0 md:w-[42%]">
         <div className="flex items-center gap-1 mb-2">
-          <h2 className="text-xs text-ink-muted uppercase tracking-wide">Net Worth</h2>
-          <HideBalancesToggle className="-my-2 p-1.5" />
+          <h2 className="text-xs text-white/75 uppercase tracking-wide">Net Worth</h2>
+          <HideBalancesToggle onDark className="-my-2 p-1.5" />
         </div>
-        <div className="money font-display text-4xl sm:text-5xl font-bold text-ink leading-none mb-3 break-all">
+        <div className="money font-display text-4xl sm:text-5xl font-bold leading-none mb-3 break-all">
           {formatCurrency(currentNetWorth)}
         </div>
         <div className={`flex flex-wrap items-center gap-1 text-sm font-semibold ${changeColor}`}>
@@ -55,17 +58,17 @@ export default function NetWorthHeroCard({ accounts, balanceEntries }) {
               {Math.abs(changePct).toFixed(1)}%)
             </span>
           )}
-          <span className="text-xs font-normal text-ink-muted">vs last month</span>
+          <span className="text-xs font-normal text-white/75">vs last month</span>
         </div>
         {unvalued.length > 0 && (
-          <Link to="/assets" className="mt-2 inline-flex items-center gap-1 text-xs text-warning hover:underline">
+          <Link to="/assets" className="mt-2 inline-flex items-center gap-1 text-xs text-[#f6d58a] hover:underline">
             <AlertTriangle size={12} aria-hidden="true" />
             {unvalued.length} account{unvalued.length === 1 ? "" : "s"} without a value left out
           </Link>
         )}
       </div>
 
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 p-4 sm:p-6">
         <div className="flex justify-end mb-1 shrink-0">
           <select
             aria-label="Net worth chart period"
@@ -81,7 +84,7 @@ export default function NetWorthHeroCard({ accounts, balanceEntries }) {
           </select>
         </div>
 
-        <div className="h-40 sm:h-48 md:h-56 money">
+        <div className="h-40 sm:h-48 md:h-56 lg:h-auto lg:flex-1 lg:min-h-[8rem] money">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={trendData} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
               <defs>

@@ -16,10 +16,11 @@ const TONES = {
     "needs-input": "text-warning",
     "tap-to-sync": "text-warning",
     pending: "text-warning",
+    synced: "text-ledger-dark",
 };
 
 // Tapping always runs the manual sync (which may open Google's sign-in and the conflict dialog).
-export default function SyncIndicator({ showLabel = true, className = "" }) {
+export default function SyncIndicator({ showLabel = true, labelClassName = "", className = "" }) {
     const { configured, status, busy, startSync, lastSyncedAt } = useSync();
     if (!configured) return null;
 
@@ -39,7 +40,7 @@ export default function SyncIndicator({ showLabel = true, className = "" }) {
                 } ${className}`}
         >
             <Icon size={15} className={status === "syncing" ? "animate-spin" : undefined} aria-hidden="true" />
-            {showLabel && <span>{label}</span>}
+            {showLabel && <span className={labelClassName}>{label}</span>}
         </button>
     );
 }

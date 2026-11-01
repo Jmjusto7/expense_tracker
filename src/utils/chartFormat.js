@@ -22,25 +22,49 @@ export const valueFormatters = (unit = null) =>
         ? { tick: compactNumber, full: (v) => formatUnits(v, unit) }
         : { tick: compactCurrency, full: (v) => formatCurrency(v) };
 
-// Ledger/travel-family palette for categorical slices. Deliberately excludes the
-// alert red and warning amber, which mean "bad"/"pending" elsewhere in the app.
+// Distinct hues for categorical slices. Excludes alert red and warning amber ("bad"/"pending")
+// and the travel orange, which only ever means Travel.
+export const TRAVEL_COLOR = "#b8622e";
 export const SLICE_COLORS = [
-    "#1f6f5c",
-    "#b8622e",
-    "#3d8a76",
-    "#d4884f",
-    "#164f42",
-    "#8a4a1f",
-    "#6b8a7f",
-    "#4f6f8a",
-    "#7a6a9a",
-    "#5c7a3d",
+    "#1f6f5c", // ledger green
+    "#4f6f8a", // slate blue
+    "#7a6a9a", // plum
+    "#d4884f", // apricot
+    "#5b8fb9", // sky
+    "#b05a7a", // berry
+    "#8c6d5a", // mocha
 ];
 
-// Same name -> same colour on every chart and every visit (a string hash, not the slice's rank).
-export function colorForKey(key) {
+const isTravelKey = (key) => String(key ?? "").trim().toLowerCase() === "travel";
+
+const hashKey = (key) => {
     const s = String(key ?? "");
     let h = 0;
     for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-    return SLICE_COLORS[h % SLICE_COLORS.length];
+    return h;
+};
+
+// Same name -> same colour on every chart and every visit (a string hash, not the slice's rank).
+export function colorForKey(key) {
+    if (isTravelKey(key)) return TRAVEL_COLOR;
+    return SLICE_COLORS[hashKey(key) % SLICE_COLORS.length];
+}
+
+// Colours for one chart: each name keeps its hashed colour unless another name already took it,
+// so no two slices in the same chart match. Order-independent for the same set of names.
+export function colorsForKeys(keys) {
+    const names = [...new Set(keys.map((k) => String(k ?? "")))].sort();
+    const map = new Map();
+    const used = new Set();
+    for (const name of names) {
+        if (isTravelKey(name)) map.set(name, TRAVEL_COLOR);
+    }
+    for (const name of names) {
+        if (map.has(name)) continue;
+        let i = hashKey(name) % SLICE_COLORS.length;
+        for (let n = 0; n < SLICE_COLORS.length && used.has(SLICE_COLORS[i]); n++) i = (i + 1) % SLICE_COLORS.length;
+        used.add(SLICE_COLORS[i]);
+        map.set(name, SLICE_COLORS[i]);
+    }
+    return (key) => map.get(String(key ?? "")) ?? colorForKey(key);
 }

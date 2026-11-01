@@ -156,14 +156,14 @@ export default function TravelDetailPage() {
 
   if (!travel) {
     return (
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8">
+      <div className="page-shell">
         <p className="text-alert">Travel not found.</p>
       </div>
     );
   }
 
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8">
+    <div className="page-shell">
       <Breadcrumbs items={[{ label: "Travels", to: "/travels" }, { label: travel.title }]} />
 
       <div className="mt-3 mb-6">

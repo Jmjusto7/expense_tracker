@@ -1,6 +1,6 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
-import { Plus, AlertTriangle, ChevronDown } from "lucide-react";
+import { Plus, AlertTriangle } from "lucide-react";
 import { useExpenseContext } from "../context/ExpenseContext";
 import AddAccountModal from "../components/AddAccountModal";
 import EditAccountModal from "../components/EditAccountModal";
@@ -10,9 +10,11 @@ import LabelledStackBar from "../components/LabelledStackBar";
 import IncomeExpenseChart from "../components/IncomeExpenseChart";
 import ImpliedSpendChart from "../components/ImpliedSpendChart";
 import HideBalancesToggle from "../components/HideBalancesToggle";
+import Tour from "../components/Tour";
+import { TOURS } from "../utils/tourSteps";
 import { useStoredState } from "../hooks/useStoredState";
 import { formatCurrency } from "../utils/formatCurrency";
-import { formatUnits } from "../utils/chartFormat";
+import { colorsForKeys, formatUnits } from "../utils/chartFormat";
 import { formatDate } from "../utils/dateHelpers";
 import {
   getCurrentBalance,
@@ -65,7 +67,7 @@ export default function AccountsPage() {
   const [editAccountId, setEditAccountId] = useState(null);
   const [sortBy, setSortBy] = useStoredState("tracker.assets.sort", "value");
   const [collapsed, setCollapsed] = useStoredState("tracker.assets.collapsed", []);
-  const [showHistory, setShowHistory] = useState(hash === "#history");
+  const [panel, setPanel] = useState(hash === "#history" ? "history" : "allocation");
   const [impliedAccountId, setImpliedAccountId] = useState("all");
   const [deleteError, setDeleteError] = useState("");
 
@@ -129,12 +131,17 @@ export default function AccountsPage() {
       .sort((a, b) => new Date(a.toDate) - new Date(b.toDate));
   }, [assetAccounts, balanceEntries, impliedAccountId]);
   const accountsWithGaps = assetAccounts.filter((acc) => getImpliedSpendPeriods(balanceEntries, acc.id).length > 0);
+  const hasHistory = monthlyIncomeExpenseData.length > 0 || accountsWithGaps.length > 0;
 
   const toggleGroup = (key) =>
     setCollapsed((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
 
-  const renderRow = (account, depth = 0) => {
+  // Same names as the allocation bar, so row tiles match their type's segment.
+  const typeColor = colorsForKeys(groups.filter((g) => g.subtotal > 0).map((g) => g.name));
+
+  const renderRow = (account, depth = 0, typeName = "") => {
     const isForeign = account.unit != null;
+    const tint = typeColor(typeName);
     const balance = getCurrentBalance(balanceEntries, account.id);
     const phpValue = valueOf(account);
     const staleDays = staleDaysOf(account);
@@ -158,17 +165,17 @@ export default function AccountsPage() {
     return (
       <div
         key={account.id}
-        className={`group relative flex items-center gap-3 py-2.5 pr-2 hover:bg-surface-sunken focus-within:bg-surface-sunken transition-colors ${depth ? "bg-surface-sunken/60" : ""}`}
-        style={{ paddingLeft: `${0.75 + depth * 1.25}rem` }}
+        className={`group relative flex items-center gap-3 py-2.5 pr-2 pl-[calc(0.75rem+var(--indent))] md:grid md:grid-cols-[2rem_minmax(0,1.4fr)_minmax(0,1fr)_5rem_8rem_3.5rem] md:pl-3 hover:bg-surface-sunken focus-within:bg-surface-sunken transition-colors ${depth ? "bg-surface-sunken/60" : ""}`}
+        style={{ "--indent": `${depth * 1.25}rem` }}
       >
         <span
-          className={`h-8 w-8 rounded-lg grid place-items-center shrink-0 text-[11px] font-bold ${isForeign ? "bg-travel-soft text-travel-dark" : "bg-ledger-soft text-ledger-dark"
-            }`}
+          className="h-8 w-8 rounded-lg grid place-items-center shrink-0 text-[11px] font-bold"
+          style={{ backgroundColor: `color-mix(in srgb, ${tint} 16%, white)`, color: tint }}
           aria-hidden="true"
         >
           {isForeign ? account.unit.slice(0, 3) : initials(account.name) || "?"}
         </span>
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 md:pl-[var(--indent)]">
           <Link
             to={`/assets/${account.id}`}
             title={account.name}
@@ -177,13 +184,17 @@ export default function AccountsPage() {
             {depth > 0 && <span className="text-ink-muted" aria-hidden="true">↳ </span>}
             {account.name}
           </Link>
-          <div className="text-[11px] text-ink-muted truncate">{sub}</div>
+          <div className="text-[11px] text-ink-muted truncate md:hidden">{sub}</div>
+        </div>
+        <div className="hidden md:block text-xs text-ink-muted truncate">{sub}</div>
+        <div className="hidden md:block text-right">
+          <Change now={phpValue} before={priorById.get(account.id) ?? null} />
         </div>
         <div className="text-right shrink-0">
           <div className={`money text-sm font-semibold ${phpValue == null ? "text-warning" : phpValue < 0 ? "text-alert" : "text-ink"}`}>
             {phpValue == null ? "—" : formatCurrency(phpValue)}
           </div>
-          <Change now={phpValue} before={priorById.get(account.id) ?? null} />
+          <Change now={phpValue} before={priorById.get(account.id) ?? null} className="md:hidden" />
         </div>
         <CardActions
           compact
@@ -200,9 +211,10 @@ export default function AccountsPage() {
   const totalChange = priorTotal ? ((totalBalance - priorTotal) / Math.abs(priorTotal)) * 100 : null;
 
   return (
-    <div data-balances className="max-w-3xl mx-auto px-4 sm:px-6 py-8">
+    <div data-balances className="page-shell">
       <div className="flex flex-wrap justify-between items-center mb-4 gap-2">
         <h1 className="font-display text-2xl text-ink">Assets</h1>
+        {isLoaded && assetAccounts.length > 0 && <Tour id="assets" steps={TOURS.assets} />}
         <div className="flex items-center gap-2">
           <HideBalancesToggle />
           <button
@@ -231,95 +243,57 @@ export default function AccountsPage() {
 
       {assetAccounts.length > 0 && (
         <>
-          <section aria-label="Total assets" className="bg-surface border border-border rounded-xl p-4 sm:p-5 mb-6">
-            <div className="text-xs text-ink-muted uppercase tracking-wide">Total assets</div>
-            <div className={`money font-display text-3xl sm:text-4xl font-bold mt-1 ${totalBalance < 0 ? "text-alert" : "text-ink"}`}>
-              {formatCurrency(totalBalance)}
+          <section id="history" aria-label="Total assets" className="bg-surface border border-border rounded-xl shadow-card overflow-hidden mb-6 scroll-mt-20">
+            <div className="hero-ledger p-4 sm:p-5">
+              <div className="text-xs text-white/75 uppercase tracking-wide">Total assets</div>
+              <div className={`money font-display text-3xl sm:text-4xl font-bold mt-1 ${totalBalance < 0 ? "text-[#ffd4ce]" : ""}`}>
+                {formatCurrency(totalBalance)}
+              </div>
+              {totalChange != null && totalBalance !== priorTotal && (
+                <p className={`text-xs font-medium mt-1 ${totalBalance > priorTotal ? "text-white" : "text-[#ffd4ce]"}`}>
+                  {totalBalance > priorTotal ? "▲ +" : "▼ -"}
+                  {Math.abs(totalChange).toFixed(1)}% <span className="text-white/75 font-normal">vs last month ·</span>{" "}
+                  <span className="money">{formatCurrency(Math.abs(totalBalance - priorTotal))}</span>
+                </p>
+              )}
+              {hasLiabilities && (
+                <p className="text-xs text-white/75 mt-1">
+                  Net worth after{" "}
+                  <Link to="/liabilities" className="text-white underline-offset-2 hover:underline">
+                    liabilities
+                  </Link>
+                  : <span className="money font-semibold text-white">{formatCurrency(totalBalance + liabilityTotal)}</span>
+                </p>
+              )}
+              {unvalued.length > 0 && (
+                <p className="flex items-start gap-1 text-xs text-[#f6d58a] mt-1">
+                  <AlertTriangle size={13} className="mt-px shrink-0" aria-hidden="true" />
+                  {unvalued.length} account{unvalued.length === 1 ? "" : "s"} not valued ({unvalued.map((a) => a.name).join(", ")}) - not included above.
+                </p>
+              )}
             </div>
-            {totalChange != null && totalBalance !== priorTotal && (
-              <p className={`text-xs font-medium mt-1 ${totalBalance > priorTotal ? "text-ledger-dark" : "text-alert"}`}>
-                {totalBalance > priorTotal ? "▲ +" : "▼ -"}
-                {Math.abs(totalChange).toFixed(1)}% <span className="text-ink-muted font-normal">vs last month ·</span>{" "}
-                <span className="money">{formatCurrency(Math.abs(totalBalance - priorTotal))}</span>
-              </p>
-            )}
-            {hasLiabilities && (
-              <p className="text-xs text-ink-muted mt-1">
-                Net worth after{" "}
-                <Link to="/liabilities" className="text-ledger-dark hover:underline">
-                  liabilities
-                </Link>
-                : <span className="money font-semibold text-ink">{formatCurrency(totalBalance + liabilityTotal)}</span>
-              </p>
-            )}
-            {unvalued.length > 0 && (
-              <p className="flex items-start gap-1 text-xs text-warning mt-1">
-                <AlertTriangle size={13} className="mt-px shrink-0" aria-hidden="true" />
-                {unvalued.length} account{unvalued.length === 1 ? "" : "s"} not valued ({unvalued.map((a) => a.name).join(", ")}) - not included above.
-              </p>
-            )}
-            <div className="mt-4">
-              <LabelledStackBar label="Allocation by type" segments={groups.map((g) => ({ name: g.name, value: g.subtotal }))} />
-            </div>
-          </section>
-
-          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-            <h2 className="text-sm font-semibold text-ink-muted uppercase tracking-wide">Accounts</h2>
-            <label className="flex items-center gap-2 text-sm text-ink-muted">
-              Sort
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value)}
-                className="border border-border rounded-md px-2 py-1 bg-surface text-ink text-sm"
-              >
-                {SORT_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          {groups.map((group) => (
-            <AccountGroup
-              key={group.key}
-              id={`assets-${group.key}`}
-              title={group.name}
-              list
-              collapsed={collapsed.includes(group.key)}
-              onToggle={() => toggleGroup(group.key)}
-              summary={
-                <>
-                  <span className="text-ink-muted">{group.count}</span>
-                  {group.unvalued > 0 && <span className="text-warning">{group.unvalued} not valued</span>}
-                  <span className="money font-semibold text-ink">{formatCurrency(group.subtotal)}</span>
-                </>
-              }
-            >
-              {sortRoots(group.roots, sortBy, { valueOf, staleDaysOf }).flatMap((root) => [
-                renderRow(root),
-                ...flattenDescendants(root).map(({ account, depth }) => renderRow(account, depth)),
-              ])}
-            </AccountGroup>
-          ))}
-
-          {(monthlyIncomeExpenseData.length > 0 || accountsWithGaps.length > 0) && (
-            <section id="history" className="bg-surface border border-border rounded-xl mt-6 scroll-mt-20">
-              <h2>
-                <button
-                  type="button"
-                  onClick={() => setShowHistory((v) => !v)}
-                  aria-expanded={showHistory}
-                  aria-controls="assets-history-panel"
-                  className="w-full flex items-center justify-between gap-2 px-4 py-3 text-left text-sm font-semibold text-ink"
-                >
-                  History charts
-                  <ChevronDown size={16} aria-hidden="true" className={`text-ink-muted transition-transform ${showHistory ? "" : "-rotate-90"}`} />
-                </button>
-              </h2>
-              {showHistory && (
-                <div id="assets-history-panel" className="px-4 pb-4 space-y-6">
+            <div className="px-4 py-3 sm:px-5">
+              {hasHistory && (
+                <div className="inline-flex rounded-full border border-border bg-surface-sunken p-0.5 mb-3" role="group" aria-label="Show">
+                  {[
+                    ["allocation", "Allocation"],
+                    ["history", "History"],
+                  ].map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      aria-pressed={panel === value}
+                      onClick={() => setPanel(value)}
+                      className={`px-3 py-1 rounded-full text-xs transition-colors ${panel === value ? "bg-surface text-ink font-semibold shadow-sm" : "text-ink-muted hover:text-ink"
+                        }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {panel === "history" && hasHistory ? (
+                <div className="space-y-6">
                   {monthlyIncomeExpenseData.length > 0 && (
                     <div>
                       <h3 className="text-sm font-semibold mb-2 text-ink">Income vs Expense · all history</h3>
@@ -351,9 +325,64 @@ export default function AccountsPage() {
                     </div>
                   )}
                 </div>
+              ) : (
+                <LabelledStackBar label="Allocation by type" segments={groups.map((g) => ({ name: g.name, value: g.subtotal }))} />
               )}
-            </section>
-          )}
+            </div>
+          </section>
+
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+            <h2 className="text-sm font-semibold text-ink-muted uppercase tracking-wide">Accounts</h2>
+            <label className="flex items-center gap-2 text-sm text-ink-muted">
+              Sort
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                className="border border-border rounded-md px-2 py-1 bg-surface text-ink text-sm"
+              >
+                {SORT_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div
+            aria-hidden="true"
+            className="hidden md:grid grid-cols-[2rem_minmax(0,1.4fr)_minmax(0,1fr)_5rem_8rem_3.5rem] gap-3 px-3 pr-2 mb-1 text-[10px] uppercase tracking-wide text-ink-muted"
+          >
+            <span />
+            <span>Account</span>
+            <span>Status</span>
+            <span className="text-right">vs last month</span>
+            <span className="text-right">Value</span>
+            <span />
+          </div>
+
+          {groups.map((group) => (
+            <AccountGroup
+              key={group.key}
+              id={`assets-${group.key}`}
+              title={group.name}
+              list
+              collapsed={collapsed.includes(group.key)}
+              onToggle={() => toggleGroup(group.key)}
+              summary={
+                <>
+                  <span className="text-ink-muted">{group.count}</span>
+                  {group.unvalued > 0 && <span className="text-warning">{group.unvalued} not valued</span>}
+                  <span className="money font-semibold text-ink">{formatCurrency(group.subtotal)}</span>
+                </>
+              }
+            >
+              {sortRoots(group.roots, sortBy, { valueOf, staleDaysOf }).flatMap((root) => [
+                renderRow(root, 0, group.name),
+                ...flattenDescendants(root).map(({ account, depth }) => renderRow(account, depth, group.name)),
+              ])}
+            </AccountGroup>
+          ))}
         </>
       )}
 

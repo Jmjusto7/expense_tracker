@@ -68,7 +68,7 @@ export default function HierarchyGuard({ children }) {
       );
 
       if (!yearObj) {
-        navigate("/expenses/overview", { replace: true });
+        navigate("/expenses/years", { replace: true });
         return;
       }
 

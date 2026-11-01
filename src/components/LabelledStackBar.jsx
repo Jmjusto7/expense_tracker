@@ -1,4 +1,4 @@
-import { colorForKey } from "../utils/chartFormat";
+import { colorsForKeys } from "../utils/chartFormat";
 
 // Horizontal share bar where every segment is also named with its % underneath.
 // segments: [{ name, value }] - non-positive values are left out.
@@ -7,6 +7,7 @@ export default function LabelledStackBar({ segments, height = "h-3", label, maxL
     const total = positive.reduce((sum, s) => sum + s.value, 0);
     if (!total) return null;
 
+    const colorFor = colorsForKeys(positive.map((s) => s.name));
     const pct = (v) => Math.round((v / total) * 100);
     const shown = positive.slice(0, maxLegend);
     const rest = positive.slice(maxLegend);
@@ -22,7 +23,7 @@ export default function LabelledStackBar({ segments, height = "h-3", label, maxL
                     <span
                         key={s.name}
                         className="h-full border-r border-surface last:border-r-0"
-                        style={{ width: `${(s.value / total) * 100}%`, backgroundColor: colorForKey(s.name) }}
+                        style={{ width: `${(s.value / total) * 100}%`, backgroundColor: colorFor(s.name) }}
                     />
                 ))}
             </div>
@@ -31,7 +32,7 @@ export default function LabelledStackBar({ segments, height = "h-3", label, maxL
                     <li key={s.name} className="flex items-center gap-1 min-w-0">
                         <span
                             className="h-2 w-2 rounded-sm shrink-0"
-                            style={{ backgroundColor: s.other ? "var(--color-border)" : colorForKey(s.name) }}
+                            style={{ backgroundColor: s.other ? "var(--color-border)" : colorFor(s.name) }}
                         />
                         <span className="truncate max-w-[10rem]">{s.name}</span>
                         <span className="text-ink">{pct(s.value)}%</span>

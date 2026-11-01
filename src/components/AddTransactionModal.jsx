@@ -7,6 +7,8 @@ import { blankRow, buildRowUpserts, getLastPaidFrom, rememberPaidFrom } from "..
 import { useInlineAddTravel } from "../hooks/useInlineAddTravel";
 import TransactionRowsEditor from "./transaction-row/TransactionRowsEditor";
 import Dialog, { Field, inputClass } from "./Dialog";
+import Tour from "./Tour";
+import { TOURS } from "../utils/tourSteps";
 
 const parseLocalDate = (value) => (value ? new Date(`${value}T00:00:00`) : null);
 
@@ -121,6 +123,7 @@ export default function AddTransactionModal({ year, month, onClose, onSaved, def
             {notice}
           </p>
         )}
+        <Tour id="add-transaction" steps={TOURS.addTransaction} delay={500} />
 
         <div className="mb-5 max-w-xs">
           <Field

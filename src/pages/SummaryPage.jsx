@@ -3,16 +3,18 @@ import { Link, useNavigate } from "react-router-dom";
 import { Bell, ChevronRight, Plus, Wallet, Cloud } from "lucide-react";
 import { useExpenseContext } from "../context/ExpenseContext";
 import { useBucketsWithCategories } from "../hooks/useBucketsWithCategories";
-import { ALL_MONTHS } from "../utils/dateHelpers";
+import { ALL_MONTHS, monthIndexOf } from "../utils/dateHelpers";
 import { formatCurrency } from "../utils/formatCurrency";
+import { colorsForKeys } from "../utils/chartFormat";
 import { getAttentionItems, getUpcomingLiabilityEvents } from "../utils/attention";
 import { buildMonthlyIncomeExpense, findMonthRow } from "../utils/incomeExpenseHelpers";
 import { classifyTransactions, groupByEffectiveBucket } from "../utils/transactionClassification";
 import NetWorthHeroCard from "../components/NetWorthHeroCard";
-import MonthSummaryCard from "../components/MonthSummaryCard";
 import LabelledStackBar from "../components/LabelledStackBar";
 import AddTransactionModal from "../components/AddTransactionModal";
 import InstallBanner from "../components/InstallBanner";
+import Tour from "../components/Tour";
+import { TOURS } from "../utils/tourSteps";
 
 const COMING_UP_DAYS = 14;
 const EVENT_BADGES = {
@@ -20,19 +22,18 @@ const EVENT_BADGES = {
   paid: "bg-ledger-soft text-ledger-dark",
 };
 
-function StatTile({ label, value, sub, title }) {
+function MonthChange({ amount, pct }) {
+  if (pct === null) return <span className="block text-[11px] text-ink-muted">No prior month</span>;
   return (
-    <div className="bg-surface border border-border rounded-xl p-3 min-w-0" title={title}>
-      <div className="text-[10px] sm:text-[11px] text-ink-muted uppercase tracking-wide leading-tight">{label}</div>
-      <div className="text-base sm:text-xl font-bold text-ink leading-tight mt-1 break-words">{value}</div>
-      {sub && <div className="text-[11px] text-ink-muted mt-0.5 truncate">{sub}</div>}
-    </div>
+    <span className="block text-[11px] text-ink-muted truncate">
+      {amount > 0 ? "▲" : amount < 0 ? "▼" : "–"} {Math.abs(pct).toFixed(0)}% vs last month
+    </span>
   );
 }
 
 function ComingUp({ events }) {
   return (
-    <section aria-labelledby="coming-up-title" className="bg-surface border border-border rounded-xl p-4 h-full">
+    <section aria-labelledby="coming-up-title" className="bg-surface border border-border rounded-xl shadow-card p-4 h-full">
       <div className="flex items-baseline justify-between gap-2 mb-2">
         <h2 id="coming-up-title" className="text-sm font-semibold text-ink">
           Coming up
@@ -77,7 +78,7 @@ function ComingUp({ events }) {
 
 function LoadingState() {
   return (
-    <div role="status" aria-live="polite" className="max-w-6xl mx-auto px-4 sm:px-6 py-8 flex flex-col gap-4 animate-pulse">
+    <div role="status" aria-live="polite" className="page-shell flex flex-col gap-4 animate-pulse">
       <span className="sr-only">Loading your data…</span>
       <div className="h-48 rounded-xl bg-surface-sunken" />
       <div className="grid grid-cols-2 gap-4">
@@ -133,7 +134,7 @@ function Onboarding() {
         {steps.map(({ icon, title, text, action }, i) => {
           const Icon = icon;
           return (
-            <li key={title} className="bg-surface border border-border rounded-xl p-4 flex gap-3">
+            <li key={title} className="bg-surface border border-border rounded-xl shadow-card p-4 flex gap-3">
               <div className="h-9 w-9 shrink-0 rounded-full bg-ledger-soft text-ledger-dark flex items-center justify-center">
                 <Icon size={18} aria-hidden="true" />
               </div>
@@ -158,7 +159,7 @@ function Onboarding() {
   );
 }
 
-function AttentionPanel({ items }) {
+function AttentionPanel({ items, listId = "attention-list" }) {
   const [open, setOpen] = useState(false);
   const alertCount = items.filter((i) => i.severity === "alert").length;
 
@@ -168,7 +169,7 @@ function AttentionPanel({ items }) {
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        aria-controls="attention-list"
+        aria-controls={listId}
         className="relative flex items-center gap-2 px-3 py-1.5 rounded-full text-sm text-ink-muted hover:text-ink hover:bg-surface-sunken transition-colors"
       >
         <Bell size={18} aria-hidden="true" />
@@ -184,7 +185,7 @@ function AttentionPanel({ items }) {
         )}
       </button>
       {open && items.length > 0 && (
-        <ul id="attention-list" className="w-full bg-surface border border-border rounded-xl divide-y divide-border">
+        <ul id={listId} className="w-full bg-surface border border-border rounded-xl shadow-card divide-y divide-border">
           {items.map((item) => (
             <li key={item.key}>
               <Link to={item.to} className="flex items-center gap-3 px-4 py-2.5 hover:bg-surface-sunken">
@@ -265,75 +266,133 @@ const SummaryPage = () => {
 
   const comingUp = useMemo(() => getUpcomingLiabilityEvents(accounts, balanceEntries, today, COMING_UP_DAYS), [accounts, balanceEntries, today]);
 
+  const allTime = useMemo(() => {
+    const totals = new Map();
+    let earliestKey = null;
+    for (const t of allTransactions) {
+      const name = t.category || "Uncategorized";
+      totals.set(name, (totals.get(name) ?? 0) + Number(t.amount || 0));
+      const m = monthIndexOf(t.monthName);
+      if (t.yearNumber && m >= 0) {
+        const key = `${t.yearNumber}-${String(m + 1).padStart(2, "0")}`;
+        if (!earliestKey || key < earliestKey) earliestKey = key;
+      }
+    }
+    const rows = [...totals].map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+    const top = rows.slice(0, 5).filter((r) => r.value > 0);
+    const total = rows.reduce((s, r) => s + r.value, 0);
+    const [y, mm] = (earliestKey ?? "").split("-");
+    return {
+      top,
+      total,
+      restCount: rows.length - top.length,
+      restTotal: total - top.reduce((s, r) => s + r.value, 0),
+      earliestKey,
+      sinceLabel: earliestKey ? `${ALL_MONTHS[Number(mm) - 1].slice(0, 3)} ${y}` : "",
+    };
+  }, [allTransactions]);
+  const allTimeColor = colorsForKeys(allTime.top.map((r) => r.name));
+  const iconByCategory = useMemo(() => {
+    const map = new Map();
+    for (const b of buckets) if (b.icon) for (const c of b.categories || []) map.set(c, b.icon);
+    return map;
+  }, [buckets]);
+
   const attentionItems = useMemo(() => getAttentionItems(accounts, balanceEntries, today), [accounts, balanceEntries, today]);
 
   if (!isLoaded) return <LoadingState />;
   if (accounts.length === 0 && allTransactions.length === 0) return <Onboarding />;
 
-  const cardLink = "block h-full rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ledger hover:shadow-sm";
   const monthPath = `/expenses/${currentYear}/${currentMonthName}`;
+  const overviewMonth = `${currentYear}-${String(today.getMonth() + 1).padStart(2, "0")}`;
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8 flex flex-col gap-4">
+    <div className="page-shell flex flex-col gap-3">
       <h1 className="sr-only">Home</h1>
-      <AttentionPanel items={attentionItems} />
+      <Tour id="home" steps={TOURS.home} />
       <InstallBanner />
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2 min-w-0">
-          <NetWorthHeroCard accounts={accounts} balanceEntries={balanceEntries} />
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+        {/* Phones: attention on top. Wide screens: it sits inside the month card instead. */}
+        <div className="min-w-0 lg:hidden">
+          <AttentionPanel items={attentionItems} />
         </div>
 
-        <div className="grid grid-cols-1 min-[420px]:grid-cols-2 lg:grid-cols-1 gap-4">
-          <Link to="/assets#history" className={cardLink} aria-label="This month's income - see income history">
-            <MonthSummaryCard
-              label="This Month's Income"
-              value={thisMonthIncome}
-              changeAmount={incomeChangeAmount}
-              changePct={incomeChangePct}
-              accent="ledger"
-              compact
-            />
-          </Link>
-          <Link to={monthPath} className={cardLink} aria-label={`This month's expenses - open ${currentMonthName} ${currentYear}`}>
-            <MonthSummaryCard
-              label="This Month's Expenses"
-              value={thisMonthExpense}
-              changeAmount={expenseChangeAmount}
-              changePct={expenseChangePct}
-              accent="alert"
-              compact
-            />
-          </Link>
+        {/* Stretches to the month card's height; the chart absorbs the difference. */}
+        <div className="lg:col-span-2 min-w-0 lg:self-stretch">
+          <NetWorthHeroCard accounts={accounts} balanceEntries={balanceEntries} className="h-full" />
         </div>
 
-        <section aria-label={`${currentMonthName} at a glance`} className="lg:col-span-2 grid grid-cols-3 gap-2 sm:gap-4">
-          <StatTile
-            label="Savings rate"
-            value={savingsRatePct === null ? "—" : `${savingsRatePct.toFixed(0)}%`}
-            sub="of income"
-          />
-          <StatTile
-            label="Largest expense"
-            value={<span className="money">{largestExpense ? formatCurrency(largestExpense.amount) : "—"}</span>}
-            sub={largestExpense?.category}
-            title={largestExpense ? `${largestExpense.category} on ${largestExpense.date.toLocaleDateString()}` : undefined}
-          />
-          <StatTile
-            label="Top category"
-            value={<span className="block truncate">{topCategory?.name || "—"}</span>}
-            sub={topCategory ? `${topCategory.pct.toFixed(0)}% · ${formatCurrency(topCategory.amount)}` : undefined}
-            title={topCategory?.name}
-          />
-        </section>
-
-        <section aria-labelledby="where-title" className="bg-surface border border-border rounded-xl p-4 min-w-0">
+        <section aria-labelledby="this-month-title" className="bg-surface border border-border rounded-xl shadow-card p-4 min-w-0 lg:self-stretch">
+          <div className="hidden lg:block -mt-1 mb-2">
+            <AttentionPanel items={attentionItems} listId="attention-list-wide" />
+          </div>
           <div className="flex items-baseline justify-between gap-2 mb-3">
-            <h2 id="where-title" className="text-sm font-semibold text-ink">
-              Where it went
+            <h2 id="this-month-title" className="text-sm font-semibold text-ink">
+              {currentMonthName}
             </h2>
             <Link to={monthPath} className="text-xs text-ledger-dark hover:underline">
-              {currentMonthName}
+              Open month ›
+            </Link>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Link to="/assets#history" className="rounded-lg bg-ledger-soft px-3 py-2 hover:ring-1 hover:ring-ledger/40 min-w-0" aria-label="This month's income - see income history">
+              <span className="block text-[11px] uppercase tracking-wide text-ink-muted">Income</span>
+              <span className="block money text-lg font-bold text-ledger-dark truncate">{formatCurrency(thisMonthIncome)}</span>
+              <MonthChange amount={incomeChangeAmount} pct={incomeChangePct} />
+            </Link>
+            <Link to={monthPath} className="rounded-lg bg-alert-soft px-3 py-2 hover:ring-1 hover:ring-alert/40 min-w-0" aria-label={`This month's expenses - open ${currentMonthName} ${currentYear}`}>
+              <span className="block text-[11px] uppercase tracking-wide text-ink-muted">Expenses</span>
+              <span className="block money text-lg font-bold text-alert truncate">{formatCurrency(thisMonthExpense)}</span>
+              <MonthChange amount={expenseChangeAmount} pct={expenseChangePct} />
+            </Link>
+          </div>
+          <dl className="mt-2 divide-y divide-border text-sm">
+            <div className="flex items-baseline justify-between gap-3 py-1.5">
+              <dt className="text-ink-muted shrink-0">Savings rate</dt>
+              <dd className="font-semibold text-ink">{savingsRatePct === null ? "—" : `${savingsRatePct.toFixed(0)}% of income`}</dd>
+            </div>
+            <div
+              className="flex items-baseline justify-between gap-3 py-1.5"
+              title={largestExpense ? `${largestExpense.category} on ${largestExpense.date.toLocaleDateString()}` : undefined}
+            >
+              <dt className="text-ink-muted shrink-0">Largest expense</dt>
+              <dd className="min-w-0 truncate text-right">
+                {largestExpense ? (
+                  <>
+                    <span className="text-ink-muted">{largestExpense.category} · </span>
+                    <span className="money font-semibold text-ink">{formatCurrency(largestExpense.amount)}</span>
+                  </>
+                ) : (
+                  "—"
+                )}
+              </dd>
+            </div>
+            <div className="flex items-baseline justify-between gap-3 py-1.5" title={topCategory?.name}>
+              <dt className="text-ink-muted shrink-0">Top category</dt>
+              <dd className="min-w-0 truncate text-right">
+                {topCategory ? (
+                  <>
+                    <span className="font-semibold text-ink">{topCategory.name}</span>
+                    <span className="text-ink-muted"> · {topCategory.pct.toFixed(0)}% · </span>
+                    <span className="money text-ink-muted">{formatCurrency(topCategory.amount)}</span>
+                  </>
+                ) : (
+                  "—"
+                )}
+              </dd>
+            </div>
+          </dl>
+        </section>
+
+        <div className="flex flex-col gap-4 min-w-0 lg:col-start-3 lg:row-start-2">
+        <section aria-labelledby="where-title" className="bg-surface border border-border rounded-xl shadow-card p-4 min-w-0">
+          <div className="flex items-baseline justify-between gap-2 mb-3">
+            <h2 id="where-title" className="text-sm font-semibold text-ink">
+              Where it went · {currentMonthName}
+            </h2>
+            <Link to={`/expenses/overview?from=${overviewMonth}&to=${overviewMonth}&group=bucket`} className="text-xs text-ledger-dark hover:underline">
+              Overview ›
             </Link>
           </div>
           {whereItWent.some((s) => s.value > 0) ? (
@@ -343,7 +402,51 @@ const SummaryPage = () => {
           )}
         </section>
 
-        <div className="lg:col-span-3">
+        {allTime.top.length > 0 && (
+          <section aria-labelledby="all-time-title" className="bg-surface border border-border rounded-xl shadow-card p-4 min-w-0">
+            <div className="flex items-baseline justify-between gap-2 mb-3">
+              <h2 id="all-time-title" className="text-sm font-semibold text-ink">
+                Top 5 categories · all time
+              </h2>
+              <Link to={`/expenses/overview?from=${allTime.earliestKey}&to=${overviewMonth}&group=category`} className="text-xs text-ledger-dark hover:underline">
+                Overview ›
+              </Link>
+            </div>
+            <ol className="space-y-2.5">
+              {allTime.top.map((row) => {
+                const pct = allTime.total ? (row.value / allTime.total) * 100 : 0;
+                return (
+                  <li key={row.name}>
+                    <div className="flex items-baseline justify-between gap-2 text-sm">
+                      <span className="min-w-0 truncate text-ink">
+                        {iconByCategory.get(row.name) && <span aria-hidden="true">{iconByCategory.get(row.name)} </span>}
+                        {row.name}
+                      </span>
+                      <span className="money font-semibold text-ink shrink-0">{formatCurrency(row.value)}</span>
+                    </div>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="h-1.5 flex-1 rounded-full bg-surface-sunken overflow-hidden" aria-hidden="true">
+                        <span className="block h-full rounded-full" style={{ width: `${Math.max(pct, 0)}%`, backgroundColor: allTimeColor(row.name) }} />
+                      </span>
+                      <span className="text-[11px] text-ink-muted w-9 text-right">{pct.toFixed(0)}%</span>
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+            <p className="text-[11px] text-ink-muted mt-3">
+              {allTime.restCount > 0 && (
+                <>
+                  + {allTime.restCount} more · <span className="money">{formatCurrency(allTime.restTotal)}</span> ·{" "}
+                </>
+              )}
+              <span className="money">{formatCurrency(allTime.total)}</span> since {allTime.sinceLabel}
+            </p>
+          </section>
+        )}
+        </div>
+
+        <div className="lg:col-span-2 lg:col-start-1 lg:row-start-2 min-w-0">
           <ComingUp events={comingUp} />
         </div>
       </div>

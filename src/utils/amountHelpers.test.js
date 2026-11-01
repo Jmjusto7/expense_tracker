@@ -7,6 +7,9 @@ describe("parseAmountExpression", () => {
         [" 195.5 , -130 ,25.25 ", 90.75, [195.5, -130, 25.25]],
         [".5", 0.5, [0.5]],
         ["-20", -20, [-20]],
+        ["0", 0, [0]],
+        ["500, -500", 0, [500, -500]],
+        ["150, 0", 150, [150, 0]],
     ])("parses %j", (input, total, breakdown) => {
         const result = parseAmountExpression(input);
         expect(result.error).toBeNull();
@@ -23,8 +26,6 @@ describe("parseAmountExpression", () => {
         [".", "\".\" isn't a valid number."],
         ["abc", "\"abc\" isn't a valid number."],
         ["1.2.3", "\"1.2.3\" isn't a valid number."],
-        ["0", "Amounts can't be zero."],
-        ["5,-5", "Amounts add up to zero."],
         ["", "Enter an amount."],
     ])("rejects %j", (input, error) => {
         const result = parseAmountExpression(input);

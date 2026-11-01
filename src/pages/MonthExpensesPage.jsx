@@ -1,18 +1,15 @@
 import { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useExpenseContext } from "../context/ExpenseContext";
-import { useFilter } from "../context/FilterContext";
 import { Plus, Trash2 } from "lucide-react";
 import { ALL_MONTHS } from "../utils/dateHelpers";
 import { formatCurrency } from "../utils/formatCurrency";
-import FilterBar from "../components/FilterBar";
 import ConfirmButton from "../components/ConfirmButton";
 import Breadcrumbs from "../components/Breadcrumbs";
 
 export default function MonthExpensesPage() {
   const { year } = useParams();
   const { years, addMonth, removeMonth } = useExpenseContext();
-  const { matches, hasActiveFilters } = useFilter();
 
   const yearInt = parseInt(year, 10);
   const yearObj = years.find((y) => y.year === yearInt);
@@ -52,14 +49,12 @@ export default function MonthExpensesPage() {
   };
 
   return (
-    <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8">
+    <div className="page-shell">
       {/* Header */}
       <div className="mb-6">
-        <Breadcrumbs items={[{ label: "Expenses", to: "/expenses/overview" }, { label: year }]} />
+        <Breadcrumbs items={[{ label: "Years", to: "/expenses/years" }, { label: year }]} />
         <h1 className="font-display text-2xl text-ink">{year} — Monthly Expenses</h1>
       </div>
-
-      <FilterBar />
 
       {/* Add Month */}
       {availableMonths.length > 0 && yearId && (
@@ -103,19 +98,17 @@ export default function MonthExpensesPage() {
               const total = month.days?.reduce(
                 (daySum, day) =>
                   daySum +
-                  (day.transactions?.filter(matches).reduce((tSum, t) => tSum + Number(t.amount || 0), 0) || 0),
+                  (day.transactions?.reduce((tSum, t) => tSum + Number(t.amount || 0), 0) || 0),
                 0
               ) || 0;
 
-              const noMatches = hasActiveFilters && total === 0;
               const dayCount = month.days?.length || 0;
               const txCount = month.days?.flatMap((d) => d.transactions || []).length || 0;
 
               return (
                 <div
                   key={month.id}
-                  className={`group relative flex justify-between items-center bg-surface border border-border p-4 rounded-lg hover:border-ledger focus-within:border-ledger transition-colors ${noMatches ? "opacity-50" : ""
-                    }`}
+                  className="group relative flex justify-between items-center bg-surface border border-border p-4 rounded-lg hover:border-ledger focus-within:border-ledger transition-colors"
                 >
                   <Link
                     to={`/expenses/${year}/${month.name}`}

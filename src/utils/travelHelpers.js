@@ -3,7 +3,7 @@
 // Sentinel id for the synthetic "Travel" filter pill/chip - it isn't a real
 // bucket in the DB. Selecting it means "any transaction tagged with a
 // travel", cutting across whatever bucket its category actually belongs to.
-// Shared across SummaryPage, FilterContext, and FilterBar so they all agree
+// Shared by classification and the Expenses filters (?b=__travel__) so they all agree
 // on what this value means.
 export const TRAVEL_FILTER_ID = "__travel__";
 

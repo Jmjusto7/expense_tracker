@@ -1474,6 +1474,12 @@ export function ExpenseProvider({ children }) {
     bumpDataVersion();
   });
 
+  // Empty icon removes it (Dexie drops keys set to undefined).
+  const setBucketIcon = withErrorHandling("setBucketIcon", async (id, icon) => {
+    await db.buckets.update(id, { icon: icon?.trim() || undefined });
+    bumpDataVersion();
+  });
+
   const removeBucket = withErrorHandling("removeBucket", async (id) => {
     await db.bucketAssignments.where({ bucketId: id }).delete();
     await db.buckets.delete(id);
@@ -1576,6 +1582,7 @@ export function ExpenseProvider({ children }) {
 
     addBucket,
     renameBucket,
+    setBucketIcon,
     removeBucket,
     assignToBucket,
     getBucketsWithCategories,

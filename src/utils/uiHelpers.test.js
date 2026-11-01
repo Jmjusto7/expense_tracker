@@ -1,6 +1,6 @@
 import { getAttentionItems, getUpcomingLiabilityEvents, liabilityStatus } from "./attention";
 import { buildRowUpserts, blankRow, getLastPaidFrom, rememberPaidFrom } from "./transactionRows";
-import { colorForKey, SLICE_COLORS } from "./chartFormat";
+import { colorForKey, colorsForKeys, SLICE_COLORS, TRAVEL_COLOR } from "./chartFormat";
 
 const today = new Date(2026, 9, 20);
 
@@ -99,6 +99,13 @@ describe("buildRowUpserts", () => {
     it("returns an error for a bad amount", () => {
         expect(buildRowUpserts([blankRow({ category: "Food", amount: "12x" })], ctx).error).toMatch(/Food/);
     });
+
+    it("saves a free (0) item but still skips a row with no amount", () => {
+        const rows = [blankRow({ category: "Lunch", amount: "0" }), blankRow({ category: "Taxi" })];
+        const { upserts, error } = buildRowUpserts(rows, ctx);
+        expect(error).toBeUndefined();
+        expect(upserts).toEqual([expect.objectContaining({ category: "Lunch", amount: 0 })]);
+    });
 });
 
 describe("last Paid From", () => {
@@ -115,5 +122,17 @@ describe("colorForKey", () => {
     it("is stable per name and from the palette", () => {
         expect(colorForKey("Food")).toBe(colorForKey("Food"));
         expect(SLICE_COLORS).toContain(colorForKey("Transport"));
+        expect(colorForKey("Travel")).toBe(TRAVEL_COLOR);
+    });
+});
+
+describe("colorsForKeys", () => {
+    it("gives every name in one chart its own colour, regardless of order", () => {
+        const names = ["Food", "Home", "Fun", "Bills", "Transport", "Health", "Pets"];
+        const colorFor = colorsForKeys(names);
+        expect(new Set(names.map(colorFor)).size).toBe(names.length);
+        const reversed = colorsForKeys([...names].reverse());
+        expect(names.map(reversed)).toEqual(names.map(colorFor));
+        expect(colorsForKeys(["Travel", "Food"])("Travel")).toBe(TRAVEL_COLOR);
     });
 });

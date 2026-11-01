@@ -35,7 +35,7 @@ export default function LiabilityDetailPage() {
 
   if (!account) {
     return (
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8">
+      <div className="page-shell">
         <p className="text-alert">Liability not found.</p>
       </div>
     );
@@ -157,7 +157,7 @@ export default function LiabilityDetailPage() {
   };
 
   return (
-    <div data-balances className="max-w-4xl mx-auto px-4 sm:px-6 py-8">
+    <div data-balances className="page-shell">
       <Breadcrumbs items={[{ label: "Liabilities", to: "/liabilities" }, { label: account.name }]} />
 
       <div className="mt-3 mb-6">

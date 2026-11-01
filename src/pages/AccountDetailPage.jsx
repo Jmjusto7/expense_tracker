@@ -47,7 +47,7 @@ export default function AccountDetailPage() {
 
   if (!account) {
     return (
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8">
+      <div className="page-shell">
         <p className="text-alert">Account not found.</p>
       </div>
     );
@@ -151,7 +151,7 @@ export default function AccountDetailPage() {
   };
 
   return (
-    <div data-balances className="max-w-4xl mx-auto px-4 sm:px-6 py-8">
+    <div data-balances className="page-shell">
       <Breadcrumbs items={[{ label: "Assets", to: "/assets" }, { label: account.name }]} />
 
       <div className="mt-3 mb-6">

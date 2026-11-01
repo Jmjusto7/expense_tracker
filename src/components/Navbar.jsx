@@ -1,4 +1,4 @@
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { createPortal } from "react-dom";
 import { Home, Receipt, Plane, Settings, Download, Upload, Plus, Wallet, CreditCard, MoreHorizontal, CloudOff, MonitorDown } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -28,13 +28,13 @@ const tabLinkClass = ({ isActive }) =>
   `flex flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-medium ${isActive ? "text-ledger-dark" : "text-ink-muted"
   }`;
 
-const actionClass =
-  "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-ink-muted hover:text-ink hover:bg-surface-sunken transition-colors";
+const menuItemClass = "w-full flex items-center gap-2 px-3 py-2 text-sm text-ink hover:bg-surface-sunken";
 
 export default function Navbar() {
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const { exportExpenses, parseImportFile, commitImport } = useExpenseContext();
-  const { message: syncMessage } = useSync();
+  const { message: syncMessage, status: syncStatus } = useSync();
   const online = useOnlineStatus();
   const install = useInstallApp();
   const handleInstall = () => (install.status === "available" ? install.promptInstall() : navigate("/settings/install"));
@@ -137,7 +137,7 @@ export default function Navbar() {
   return (
     <>
       <header className="sticky top-0 z-40 bg-paper/95 backdrop-blur-sm border-b border-border pt-[env(safe-area-inset-top)]">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
           {/* Wordmark + primary nav (phones use the bottom tab bar instead) */}
           <div className="flex items-center gap-6 min-w-0">
             <NavLink to="/" className="font-display text-lg text-ink tracking-tight shrink-0">
@@ -150,7 +150,7 @@ export default function Navbar() {
                 return (
                   <NavLink key={to} to={to} end={end} className={navLinkClass} aria-label={label} title={label}>
                     <Icon size={15} aria-hidden="true" />
-                    <span className="hidden lg:inline">{label}</span>
+                    <span className="hidden md:inline">{label}</span>
                   </NavLink>
                 );
               })}
@@ -165,77 +165,53 @@ export default function Navbar() {
               </span>
             )}
 
-            {/* Desktop actions */}
-            <div className="hidden sm:flex items-center gap-1">
-              <button
-                onClick={handleQuickAdd}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-ledger text-white hover:bg-ledger-dark transition-colors"
-              >
-                <Plus size={15} aria-hidden="true" />
-                <span>Add Transaction</span>
-              </button>
-              <button onClick={() => fileInputRef.current?.click()} className={actionClass} aria-label="Import" title="Import">
-                <Upload size={15} aria-hidden="true" />
-                <span className="hidden md:inline">Import</span>
-              </button>
-              <button onClick={exportExpenses} className={actionClass} aria-label="Export" title="Export">
-                <Download size={15} aria-hidden="true" />
-                <span className="hidden md:inline">Export</span>
-              </button>
-              <SyncIndicator />
-              {install.status === "available" && (
-                <button onClick={handleInstall} className={actionClass} aria-label="Install app" title="Install app">
-                  <MonitorDown size={15} aria-hidden="true" />
-                  <span className="hidden md:inline">Install</span>
-                </button>
-              )}
-              <NavLink
-                to="/settings"
-                aria-label="Settings"
-                title="Settings"
-                className={({ isActive }) =>
-                  `flex items-center p-1.5 rounded-md transition-colors ${isActive
-                    ? "bg-ledger-soft text-ledger-dark"
-                    : "text-ink-muted hover:text-ink hover:bg-surface-sunken"
-                  }`
-                }
-              >
-                <Settings size={17} aria-hidden="true" />
-              </NavLink>
-            </div>
+            {/* Sync only gets a word when it needs attention; synced is just the check. */}
+            <SyncIndicator showLabel={syncStatus !== "synced"} labelClassName="hidden sm:inline" />
 
-            {/* Phone actions */}
-            <div className="flex sm:hidden items-center gap-1">
-              <SyncIndicator showLabel={false} />
-              <div ref={moreRef} className="relative">
-                <button
-                  onClick={() => setMoreOpen((open) => !open)}
-                  aria-label="More"
-                  aria-haspopup="menu"
-                  aria-expanded={moreOpen}
-                  className="p-2 rounded-md text-ink-muted hover:text-ink hover:bg-surface-sunken"
-                >
-                  <MoreHorizontal size={18} aria-hidden="true" />
-                </button>
-                {moreOpen && (
-                  <div role="menu" className="absolute right-0 mt-1 w-44 bg-surface border border-border rounded-lg shadow-lg py-1">
-                    <button role="menuitem" className="w-full flex items-center gap-2 px-3 py-2 text-sm text-ink hover:bg-surface-sunken" onClick={() => { setMoreOpen(false); fileInputRef.current?.click(); }}>
-                      <Upload size={15} aria-hidden="true" /> Import
+            <button
+              onClick={handleQuickAdd}
+              data-tour="add"
+              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-ledger text-white hover:bg-ledger-dark transition-colors"
+            >
+              <Plus size={15} aria-hidden="true" />
+              <span>
+                Add<span className="hidden lg:inline"> Transaction</span>
+              </span>
+            </button>
+
+            <div ref={moreRef} className="relative">
+              <button
+                onClick={() => setMoreOpen((open) => !open)}
+                aria-label="More"
+                aria-haspopup="menu"
+                aria-expanded={moreOpen}
+                title="Import, export, install, settings"
+                className={`p-2 rounded-md sm:border sm:border-border transition-colors ${pathname.startsWith("/settings")
+                  ? "bg-ledger-soft text-ledger-dark"
+                  : "text-ink-muted hover:text-ink hover:bg-surface-sunken sm:bg-surface"
+                  }`}
+              >
+                <MoreHorizontal size={18} aria-hidden="true" />
+              </button>
+              {moreOpen && (
+                <div role="menu" className="absolute right-0 mt-1 w-48 bg-surface border border-border rounded-lg shadow-lg py-1">
+                  <button role="menuitem" className={menuItemClass} onClick={() => { setMoreOpen(false); fileInputRef.current?.click(); }}>
+                    <Upload size={15} aria-hidden="true" /> Import…
+                  </button>
+                  <button role="menuitem" className={menuItemClass} onClick={() => { setMoreOpen(false); exportExpenses(); }}>
+                    <Download size={15} aria-hidden="true" /> Export
+                  </button>
+                  {install.status !== "installed" && (
+                    <button role="menuitem" className={menuItemClass} onClick={() => { setMoreOpen(false); handleInstall(); }}>
+                      <MonitorDown size={15} aria-hidden="true" /> Install app
                     </button>
-                    <button role="menuitem" className="w-full flex items-center gap-2 px-3 py-2 text-sm text-ink hover:bg-surface-sunken" onClick={() => { setMoreOpen(false); exportExpenses(); }}>
-                      <Download size={15} aria-hidden="true" /> Export
-                    </button>
-                    <button role="menuitem" className="w-full flex items-center gap-2 px-3 py-2 text-sm text-ink hover:bg-surface-sunken" onClick={() => { setMoreOpen(false); navigate("/settings"); }}>
-                      <Settings size={15} aria-hidden="true" /> Settings
-                    </button>
-                    {install.status !== "installed" && (
-                      <button role="menuitem" className="w-full flex items-center gap-2 px-3 py-2 text-sm text-ink hover:bg-surface-sunken" onClick={() => { setMoreOpen(false); handleInstall(); }}>
-                        <MonitorDown size={15} aria-hidden="true" /> Install app
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
+                  )}
+                  <div role="separator" className="my-1 border-t border-border" />
+                  <button role="menuitem" className={menuItemClass} onClick={() => { setMoreOpen(false); navigate("/settings"); }}>
+                    <Settings size={15} aria-hidden="true" /> Settings
+                  </button>
+                </div>
+              )}
             </div>
 
             <input ref={fileInputRef} type="file" accept="application/json" onChange={handleFileSelected} className="hidden" aria-hidden="true" tabIndex={-1} />
@@ -243,7 +219,7 @@ export default function Navbar() {
         </div>
 
         {banners.map((banner) => (
-          <div key={banner.text} className="max-w-6xl mx-auto px-4 sm:px-6 pb-2">
+          <div key={banner.text} className="max-w-5xl mx-auto px-4 sm:px-6 pb-2">
             <p role="status" className={`text-sm rounded-md px-3 py-2 ${banner.error ? "text-alert bg-alert-soft" : "text-ledger-dark bg-ledger-soft"}`}>
               {banner.text}
             </p>
@@ -290,6 +266,7 @@ export default function Navbar() {
       <button
         onClick={handleQuickAdd}
         aria-label="Add transaction"
+        data-tour="add"
         className="sm:hidden fixed z-40 right-4 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] w-14 h-14 rounded-full bg-ledger text-white shadow-lg flex items-center justify-center hover:bg-ledger-dark"
       >
         <Plus size={24} aria-hidden="true" />

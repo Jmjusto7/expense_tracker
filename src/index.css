@@ -40,6 +40,9 @@
   /* unsettled/needs-attention states (e.g. an unpaid liability due) - distinct from alert's red, which reads as danger/destructive rather than "still pending" */
   --color-warning-soft: #f5eddc;
 
+  /* Soft two-layer lift for white cards */
+  --shadow-card: 0 1px 2px rgb(28 35 33 / 0.05), 0 4px 14px rgb(28 35 33 / 0.06);
+
   /* Type */
   --font-display: "Fraunces", serif;
   --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
@@ -50,6 +53,18 @@ body {
   font-family: var(--font-sans);
   background-color: var(--color-paper);
   color: var(--color-ink);
+}
+
+/* One width and top spacing for every page, matching the header's max-w-5xl. */
+@utility page-shell {
+  width: 100%;
+  max-width: var(--container-5xl);
+  margin-inline: auto;
+  padding: 1rem 1rem 2rem;
+
+  @media (width >=40rem) {
+    padding: 1.25rem 1.5rem 2.5rem;
+  }
 }
 
 /* Every currency figure in the app uses this - the one signature
@@ -97,4 +112,25 @@ html[data-hide-balances] [data-balances] .money:has(svg)::after {
 
 .font-display {
   font-family: var(--font-display);
+}
+
+/* Coloured headline bands for page totals (white text). */
+@utility hero-ledger {
+  background-image: linear-gradient(135deg, #175646, #2f8a72);
+  color: #fff;
+}
+
+@utility hero-alert {
+  background-image: linear-gradient(135deg, #7a2f29, #b5524a);
+  color: #fff;
+}
+
+@utility hero-slate {
+  background-image: linear-gradient(135deg, #2c3a44, #4f6f8a);
+  color: #fff;
+}
+
+@utility hero-travel {
+  background-image: linear-gradient(135deg, #944d22, #c27140);
+  color: #fff;
 }

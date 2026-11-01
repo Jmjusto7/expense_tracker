@@ -8,6 +8,8 @@ import TransferModal from "../components/TransferModal";
 import LogStatementCloseModal from "../components/LogStatementCloseModal";
 import ConfirmButton from "../components/ConfirmButton";
 import HideBalancesToggle from "../components/HideBalancesToggle";
+import Tour from "../components/Tour";
+import { TOURS } from "../utils/tourSteps";
 import { formatCurrency } from "../utils/formatCurrency";
 import { getStatementInfo, getTotalBalance } from "../utils/balanceHelpers";
 import { liabilityStatus } from "../utils/attention";
@@ -39,9 +41,8 @@ const shortDate = (d) => new Date(d).toLocaleDateString(undefined, { month: "sho
 function StatusPill({ status, onCard = false }) {
   return (
     <span
-      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap ${
-        onCard ? "bg-white/20 text-white" : TONE_CLASSES[status.tone]
-      }`}
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap ${onCard ? "bg-white/20 text-white" : TONE_CLASSES[status.tone]
+        }`}
     >
       {status.short}
     </span>
@@ -141,9 +142,8 @@ export default function LiabilitiesPage() {
         aria-pressed={isSelected}
         aria-label={`${account.name}: ${status.label}`}
         onClick={() => setSelectedId(account.id)}
-        className={`snap-center shrink-0 w-[17rem] md:w-auto h-40 rounded-2xl p-4 text-left text-white flex flex-col justify-between shadow-md transition-transform focus:outline-none focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 ${
-          isSelected ? "ring-2 ring-ink ring-offset-2" : "hover:-translate-y-0.5"
-        }`}
+        className={`snap-center shrink-0 w-[17rem] md:w-auto h-40 rounded-2xl p-4 text-left text-white flex flex-col justify-between shadow-[0_6px_18px_rgba(0,0,0,.18)] transition-transform focus:outline-none focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 ${isSelected ? "ring-2 ring-ink ring-offset-2" : "hover:-translate-y-0.5"
+          }`}
         style={{ background: gradientFor(account.name) }}
       >
         <div className="flex items-start justify-between gap-2">
@@ -172,7 +172,7 @@ export default function LiabilitiesPage() {
     const owed = owedOf(account);
     const usage = account.creditLimit ? (Math.max(owed, 0) / account.creditLimit) * 100 : null;
     return (
-      <section aria-label={`${account.name} details`} className="bg-surface border border-border rounded-xl p-4">
+      <section aria-label={`${account.name} details`} className="bg-surface border border-border rounded-xl shadow-card p-4">
         <div className="flex items-start justify-between gap-2 mb-3">
           <div className="min-w-0">
             <h2 className="font-semibold text-ink truncate">{account.name}</h2>
@@ -257,9 +257,10 @@ export default function LiabilitiesPage() {
   };
 
   return (
-    <div data-balances className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
+    <div data-balances className="page-shell">
       <div className="flex flex-wrap justify-between items-center mb-4 gap-2">
         <h1 className="font-display text-2xl text-ink">Liabilities</h1>
+        {isLoaded && accounts.some((a) => a.isLiability) && <Tour id="liabilities" steps={TOURS.liabilities} />}
         <div className="flex items-center gap-2">
           <HideBalancesToggle />
           <button
@@ -290,13 +291,13 @@ export default function LiabilitiesPage() {
 
       {liabilities.length > 0 && (
         <>
-          <section aria-label="Total owed" className="mb-5">
-            <div className="text-xs text-ink-muted uppercase tracking-wide">{isNetCredit ? "Net credit" : "Total owed"}</div>
-            <div className={`money font-display text-3xl font-bold ${isNetCredit ? "text-ledger-dark" : "text-alert"}`}>
+          <section aria-label="Total owed" className={`mb-5 rounded-xl shadow-card p-4 sm:p-5 ${isNetCredit ? "hero-ledger" : "hero-alert"}`}>
+            <div className="text-xs text-white/75 uppercase tracking-wide">{isNetCredit ? "Net credit" : "Total owed"}</div>
+            <div className="money font-display text-3xl sm:text-4xl font-bold mt-1">
               {formatCurrency(Math.abs(netBalance))}
             </div>
             {owedChange != null && netBalance !== priorBalance && (
-              <p className="text-xs text-ink-muted">
+              <p className="text-xs text-white/80 mt-1">
                 {owedChange > 0 ? "▲ +" : "▼ -"}
                 {Math.abs(owedChange).toFixed(1)}% owed vs last month
               </p>
@@ -305,7 +306,7 @@ export default function LiabilitiesPage() {
 
           {cards.length > 0 && (
             <>
-              <section aria-labelledby="glance-title" className="md:hidden bg-surface border border-border rounded-xl mb-4">
+              <section aria-labelledby="glance-title" className="md:hidden bg-surface border border-border rounded-xl shadow-card mb-4">
                 <h2 id="glance-title" className="px-3 pt-3 pb-1 text-xs font-semibold uppercase tracking-wide text-ink-muted">
                   At a glance
                 </h2>
@@ -316,9 +317,8 @@ export default function LiabilitiesPage() {
                         type="button"
                         onClick={() => selectCard(account.id)}
                         aria-current={selected?.account.id === account.id ? "true" : undefined}
-                        className={`w-full flex items-center gap-3 px-3 py-2.5 text-left ${
-                          selected?.account.id === account.id ? "bg-surface-sunken" : "hover:bg-surface-sunken"
-                        }`}
+                        className={`w-full flex items-center gap-3 px-3 py-2.5 text-left ${selected?.account.id === account.id ? "bg-surface-sunken" : "hover:bg-surface-sunken"
+                          }`}
                       >
                         <span className="flex-1 min-w-0 text-sm font-medium text-ink truncate">{account.name}</span>
                         <StatusPill status={status} />
@@ -348,7 +348,7 @@ export default function LiabilitiesPage() {
               <h2 id="loans-title" className="text-xs font-semibold uppercase tracking-wide text-ink-muted mb-2">
                 Loans &amp; other
               </h2>
-              <ul className="bg-surface border border-border rounded-xl divide-y divide-border">
+              <ul className="bg-surface border border-border rounded-xl shadow-card divide-y divide-border">
                 {loans.map((loan) => (
                   <li key={loan.id} className="flex items-center gap-3 px-3 py-2.5">
                     <Link to={`/liabilities/${loan.id}`} className="flex-1 min-w-0 text-sm font-medium text-ink truncate hover:underline">

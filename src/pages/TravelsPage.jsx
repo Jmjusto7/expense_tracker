@@ -10,10 +10,12 @@ import AddTransactionModal from "../components/AddTransactionModal";
 import CardActions from "../components/CardActions";
 import LabelledStackBar from "../components/LabelledStackBar";
 import TravelCalendar from "../components/TravelCalendar";
+import Tour from "../components/Tour";
+import { TOURS } from "../utils/tourSteps";
 import { ALL_MONTHS, toDateInputValue } from "../utils/dateHelpers";
 import { formatCurrency } from "../utils/formatCurrency";
 import { filterTransactionsByTravel, sumAmounts, tripDays, tripStatus } from "../utils/travelHelpers";
-import { classifyTransactions, groupByEffectiveBucket } from "../utils/transactionClassification";
+import { classifyTransactions, groupByCategory, groupByEffectiveBucket } from "../utils/transactionClassification";
 
 const SORTS = [
     { value: "date", label: "Newest" },
@@ -33,7 +35,7 @@ function formatRange(start, end) {
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 export default function TravelsPage() {
-    const { travels, allTransactions, removeTravel } = useExpenseContext();
+    const { travels, allTransactions, removeTravel, isLoaded = true } = useExpenseContext();
     const buckets = useBucketsWithCategories();
     const [params, setParams] = useSearchParams();
     const calendarView = params.get("view") === "calendar";
@@ -41,6 +43,7 @@ export default function TravelsPage() {
     const [query, setQuery] = useState("");
     const [filter, setFilter] = useState("all");
     const [sortBy, setSortBy] = useStoredState("tracker.travels.sort", "date");
+    const [breakdown, setBreakdown] = useStoredState("tracker.travels.breakdown", "bucket");
     const [showAddModal, setShowAddModal] = useState(false);
     const [editTravelId, setEditTravelId] = useState(null);
     const [addExpenseFor, setAddExpenseFor] = useState(null);
@@ -55,10 +58,12 @@ export default function TravelsPage() {
                 const tx = filterTransactionsByTravel(allTransactions, travel.id);
                 const total = sumAmounts(tx);
                 const days = tripDays(travel);
-                const segments = [...groupByEffectiveBucket(classifyTransactions(tx, buckets, { ignoreTravelOverride: true })).values()].map((g) => ({
-                    name: g.bucketLabel,
-                    value: g.total,
-                }));
+                const classified = classifyTransactions(tx, buckets, { ignoreTravelOverride: true });
+                const toSegments = (groups, nameOf) => [...groups.values()].map((g) => ({ name: nameOf(g), value: g.total }));
+                const segments = {
+                    bucket: toSegments(groupByEffectiveBucket(classified), (g) => g.bucketLabel),
+                    category: toSegments(groupByCategory(classified), (g) => g.category || "Uncategorized"),
+                };
                 return [
                     travel.id,
                     { total, days, perDay: days ? total / days : 0, segments, todaySpend: sumAmounts(tx.filter(isToday)), ...tripStatus(travel, today) },
@@ -104,7 +109,7 @@ export default function TravelsPage() {
         return (
             <li key={travel.id} className="relative pl-6 pb-3 last:pb-0">
                 <span className="absolute left-[3px] top-4 h-3 w-3 rounded-full border-[3px] border-travel bg-surface" aria-hidden="true" />
-                <div className="group relative bg-surface border border-border rounded-xl p-3 sm:p-4 hover:border-travel focus-within:border-travel transition-colors">
+                <div className="group relative bg-surface border border-border rounded-xl shadow-card p-3 sm:p-4 hover:border-travel focus-within:border-travel transition-colors">
                     <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                             <h3 className="font-semibold text-ink truncate" title={travel.title}>
@@ -137,7 +142,12 @@ export default function TravelsPage() {
                     </div>
                     {s.total > 0 && (
                         <div className="mt-2">
-                            <LabelledStackBar label="Spend by bucket" height="h-2" maxLegend={3} segments={s.segments} />
+                            <LabelledStackBar
+                                label={`Spend by ${breakdown}`}
+                                height="h-2"
+                                maxLegend={breakdown === "category" ? 4 : 3}
+                                segments={s.segments[breakdown] ?? s.segments.bucket}
+                            />
                         </div>
                     )}
                     {travel.comments && (
@@ -204,9 +214,10 @@ export default function TravelsPage() {
     const hasResults = current.length + upcoming.length + sortedPast.length > 0;
 
     return (
-        <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8">
+        <div className="page-shell">
             <div className="flex justify-between items-center mb-4 gap-2">
                 <h1 className="font-display text-2xl text-ink">{calendarView ? "Travel calendar" : "Travels"}</h1>
+                {isLoaded && travels.length > 0 && !calendarView && <Tour id="travels" steps={TOURS.travels} />}
                 <div className="flex items-center gap-2">
                     {travels.length > 0 && (
                         <button
@@ -229,7 +240,7 @@ export default function TravelsPage() {
                 </div>
             </div>
 
-            {travels.length === 0 && <p className="text-ink-muted">No travels created yet.</p>}
+            {isLoaded && travels.length === 0 && <p className="text-ink-muted">No travels created yet.</p>}
 
             {travels.length > 0 && calendarView && <TravelCalendar travels={travels} />}
 
@@ -244,8 +255,8 @@ export default function TravelsPage() {
                             aria-label="Search trips"
                             className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-surface text-ink focus:ring-2 focus:ring-travel focus:outline-none"
                         />
-                        <div className="flex items-center gap-2">
-                            <div role="group" aria-label="Filter trips" className="flex gap-1.5 overflow-x-auto flex-1 min-w-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                        <div className="flex flex-wrap items-center gap-2">
+                            <div role="group" aria-label="Filter trips" className="flex gap-1.5 overflow-x-auto basis-full sm:basis-auto sm:flex-1 min-w-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                                 {[["all", "All"], ["upcoming", "Upcoming"], ...years.map((y) => [String(y), String(y)])].map(([value, label]) => (
                                     <button
                                         key={value}
@@ -259,6 +270,23 @@ export default function TravelsPage() {
                                     </button>
                                 ))}
                             </div>
+                            <span className="inline-flex shrink-0 rounded-full border border-border bg-surface-sunken p-0.5 ml-auto sm:ml-0" role="group" aria-label="Breakdown by">
+                                {[
+                                    ["bucket", "Bucket"],
+                                    ["category", "Category"],
+                                ].map(([value, label]) => (
+                                    <button
+                                        key={value}
+                                        type="button"
+                                        aria-pressed={breakdown === value}
+                                        onClick={() => setBreakdown(value)}
+                                        className={`px-2.5 py-0.5 rounded-full text-xs transition-colors ${breakdown === value ? "bg-surface text-ink font-semibold shadow-sm" : "text-ink-muted hover:text-ink"
+                                            }`}
+                                    >
+                                        {label}
+                                    </button>
+                                ))}
+                            </span>
                             <label className="flex items-center gap-1 text-xs text-ink-muted shrink-0">
                                 <span className="sr-only sm:not-sr-only">Sort</span>
                                 <select

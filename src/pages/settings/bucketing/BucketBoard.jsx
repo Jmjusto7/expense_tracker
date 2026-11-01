@@ -4,7 +4,7 @@ import BucketTitle from "./BucketTitle";
 
 // Desktop board: drag categories between columns. Keyboard: Space picks a category up,
 // Left/Right moves it to the neighbouring column, Space or Escape puts it down.
-export default function BucketBoard({ columns, query, onMove, onRename, onRemove, metaFor }) {
+export default function BucketBoard({ columns, query, onMove, onRename, onIcon, onRemove, metaFor }) {
     const [overId, setOverId] = useState(undefined);
     const [picked, setPicked] = useState(null);
     const [announcement, setAnnouncement] = useState("");
@@ -73,7 +73,7 @@ export default function BucketBoard({ columns, query, onMove, onRename, onRemove
                                         <p className="text-[11px] text-ink-muted">{col.categories.length} · left out of bucket totals</p>
                                     </div>
                                 ) : (
-                                    <BucketTitle bucket={col} meta={metaFor(col)} onRename={onRename} onRemove={onRemove} />
+                                    <BucketTitle bucket={col} meta={metaFor(col)} onRename={onRename} onIcon={onIcon} onRemove={onRemove} />
                                 )}
                             </div>
                             <ul className="flex flex-col gap-1.5 flex-1">

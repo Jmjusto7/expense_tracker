@@ -1,6 +1,6 @@
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 import { formatCurrencyPrecise } from "../utils/formatCurrency";
-import { colorForKey, compactCurrency } from "../utils/chartFormat";
+import { colorsForKeys, compactCurrency } from "../utils/chartFormat";
 
 const MIN_LABELLED_SHARE = 0.06;
 const RADIAN = Math.PI / 180;
@@ -40,6 +40,7 @@ export default function DonutChart({
 }) {
     const total = data.reduce((s, d) => s + d.value, 0);
     const sorted = [...data].sort((a, b) => b.value - a.value);
+    const colorFor = colorsForKeys(sorted.map((d) => d.name));
     const pct = (v) => (total ? ((v / total) * 100).toFixed(1) : "0.0");
     const summary = sorted.map((d) => `${d.name} ${pct(d.value)}%`).join(", ");
 
@@ -62,7 +63,7 @@ export default function DonutChart({
                             isAnimationActive={false}
                         >
                             {sorted.map((d) => (
-                                <Cell key={d.name} fill={colorForKey(d.name)} stroke="#ffffff" />
+                                <Cell key={d.name} fill={colorFor(d.name)} stroke="#ffffff" />
                             ))}
                         </Pie>
                         <Tooltip
@@ -80,7 +81,7 @@ export default function DonutChart({
                 <ul className="mt-3 flex flex-wrap justify-center gap-x-4 gap-y-1.5 text-xs" aria-hidden="true">
                     {sorted.map((d) => (
                         <li key={d.name} className="flex items-center gap-1.5 min-w-0 max-w-full">
-                            <span className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ backgroundColor: colorForKey(d.name) }} />
+                            <span className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ backgroundColor: colorFor(d.name) }} />
                             <span className="text-ink truncate" title={d.name}>
                                 {d.name}
                             </span>

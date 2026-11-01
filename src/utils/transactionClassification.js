@@ -5,6 +5,8 @@
 
 import { TRAVEL_FILTER_ID } from "./travelHelpers";
 
+export const TRAVEL_ICON = "✈️";
+
 /**
  * Classify a single transaction into its effective bucket scope.
  *
@@ -28,6 +30,7 @@ export function classifyTransaction(tx, buckets = [], { ignoreTravelOverride = f
             scope: "travel",
             effectiveBucketId: TRAVEL_FILTER_ID,
             effectiveBucketLabel: "Travel",
+            effectiveBucketIcon: TRAVEL_ICON,
             category: tx.category,
         };
     }
@@ -40,6 +43,7 @@ export function classifyTransaction(tx, buckets = [], { ignoreTravelOverride = f
             scope: "standard",
             effectiveBucketId: owningBucket.id,
             effectiveBucketLabel: owningBucket.name,
+            effectiveBucketIcon: owningBucket.icon || null,
             category: tx.category,
         };
     }
@@ -49,6 +53,7 @@ export function classifyTransaction(tx, buckets = [], { ignoreTravelOverride = f
         scope: "standard",
         effectiveBucketId: null,
         effectiveBucketLabel: "Unassigned",
+        effectiveBucketIcon: null,
         category: tx.category,
     };
 }
@@ -86,6 +91,7 @@ export function groupByEffectiveBucket(classifiedTx) {
             groups.set(key, {
                 bucketId: tx.effectiveBucketId,
                 bucketLabel: tx.effectiveBucketLabel,
+                bucketIcon: tx.effectiveBucketIcon ?? null,
                 transactions: [],
                 total: 0,
             });
